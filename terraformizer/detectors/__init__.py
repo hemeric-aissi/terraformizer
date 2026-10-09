@@ -1,4 +1,10 @@
-"""Registre des détecteurs disponibles."""
+"""Répertorier et sélectionner les détecteurs d'analyse statique disponibles.
+
+Entrée : noms optionnels des détecteurs ; sortie : instances dans l'ordre
+du registre, sans lecture des sources à la sélection.
+Sécurité : aucun accès cloud ni exécution de contenu ; les instances
+interprètent les textes seulement lorsqu'elles sont sollicitées.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +27,18 @@ ALL_DETECTORS: tuple[Detector, ...] = (
 
 
 def get_detectors(only: Iterable[str] | None = None) -> list[Detector]:
-    """Sélectionne les détecteurs, en rejetant les noms inconnus."""
+    """Sélectionner les détecteurs dans l'ordre stable du registre.
+
+    Args:
+        only: Noms exacts demandés ; None sélectionne tous les détecteurs.
+
+    Returns:
+        Nouvelle liste des instances partagées, sans doublons ; un itérable
+        vide ne sélectionne aucun détecteur.
+
+    Raises:
+        ValueError: Au moins un nom demandé n'existe pas dans le registre.
+    """
     if only is None:
         return list(ALL_DETECTORS)
     selected = set(only)

@@ -1,4 +1,10 @@
-"""Tests ciblés des détecteurs boto3 et CloudFormation."""
+"""Vérifier la conversion statique de textes boto3 et CloudFormation.
+
+Entrées : sources Python, JSON et YAML en mémoire ; sorties : assertions
+sur les attributs, références, identifiants, limites et échappements.
+Sécurité : aucun accès cloud ni exécution des sources ; les charges hostiles
+restent des données, et le chargement YAML interdit est remplacé par un piège.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ from terraformizer.detectors.python_boto3 import PythonBoto3Detector
 
 
 def test_python_literals_tags_and_import() -> None:
+    """Les littéraux et tags boto3 sont conservés sans inventer d'identifiant d'instance."""
     source = """
 import boto3
 s3 = boto3.client('s3')
@@ -34,6 +41,7 @@ ec2.run_instances(ImageId='ami-123', InstanceType='t3.micro', MinCount=1, MaxCou
 
 
 def test_python_dynamic_nested_and_kwargs() -> None:
+    """Les valeurs dynamiques deviennent des variables et les kwargs réduisent la confiance."""
     source = """
 import boto3
 client = boto3.client('ec2')
@@ -48,6 +56,7 @@ client.run_instances(ImageId=config.ami, SecurityGroupIds=[group_id], **settings
 
 
 def test_python_services_and_non_boto_calls() -> None:
+    """Seuls les appels de création du bon service boto3 sont convertis avec leur import connu."""
     source = """
 import boto3
 session = boto3.Session()
@@ -67,6 +76,7 @@ ecs.create_bucket(Bucket='wrong-service')
 
 @pytest.mark.parametrize("source", ["import boto3\nif (", "x.create_bucket(Bucket='x')"])
 def test_python_ignored(source: str) -> None:
+    """Une source Python invalide ou un appel sans client boto3 ne produit aucune détection."""
     assert PythonBoto3Detector().detect(Path("main.py"), source) == []
 
 
@@ -106,6 +116,7 @@ def test_python_creation_mapping(
     tf_type: str,
     import_id: str | None,
 ) -> None:
+    """Chaque création boto3 reconnue reçoit le type Terraform et l'identifiant d'import attendus."""
     source = f"import boto3\nclient = boto3.client('{service}')\nclient.{method}({arguments})"
     (finding,) = PythonBoto3Detector().detect(Path("main.py"), source)
     assert finding.tf_type == tf_type
@@ -113,6 +124,7 @@ def test_python_creation_mapping(
 
 
 def test_cloudformation_references_rules_and_tags() -> None:
+    """Les références, règles et tags sont convertis et les références absentes sont signalées."""
     source = """
 AWSTemplateFormatVersion: '2010-09-09'
 Resources:
@@ -161,6 +173,7 @@ Resources:
 
 
 def test_cloudformation_json_intrinsics_and_sub() -> None:
+    """Les intrinsèques JSON produisent des expressions et un nom calculé reste non importable."""
     source = json.dumps(
         {
             "Resources": {
@@ -201,6 +214,7 @@ def test_cloudformation_json_intrinsics_and_sub() -> None:
 
 
 def test_cloudformation_dynamodb_blocks() -> None:
+    """Les attributs, clés et capacités DynamoDB deviennent les blocs et valeurs attendus."""
     source = """
 Resources:
   Table:
@@ -234,6 +248,7 @@ Resources:
 
 
 def test_cloudformation_unmapped_and_unsupported() -> None:
+    """Les types inconnus ont une confiance nulle et les propriétés ignorées sont signalées."""
     source = """
 Resources:
   Unknown:
@@ -264,6 +279,7 @@ def test_cloudformation_queue_topic_are_not_imported_by_name(
     type_name: str,
     property_name: str,
 ) -> None:
+    """Les noms de files SQS et de topics SNS ne sont jamais pris pour des identifiants d'import."""
     source = json.dumps(
         {
             "Resources": {
@@ -288,10 +304,12 @@ def test_cloudformation_queue_topic_are_not_imported_by_name(
     ],
 )
 def test_cloudformation_ignores_invalid_or_unsafe_documents(source: str) -> None:
+    """Les documents invalides, non CloudFormation ou à balises exécutables sont ignorés."""
     assert CloudFormationDetector().detect(Path("stack.yaml"), source) == []
 
 
 def test_cloudformation_unknown_yaml_tag_is_only_data() -> None:
+    """Une balise YAML inconnue devient une variable signalée et non du code exécuté."""
     source = """
 Resources:
   Bucket:
@@ -305,6 +323,7 @@ Resources:
 
 
 def test_python_session_alias_and_botocore_client() -> None:
+    """Les alias de session boto3 et clients botocore sont reconnus sans faux appel AWS."""
     source = """
 from boto3 import Session as AwsSession
 import botocore.session
@@ -324,6 +343,7 @@ object().create_bucket(Bucket='not-aws')
 
 
 def test_python_dynamodb_indexes_and_stream() -> None:
+    """Le flux et les index secondaires DynamoDB conservent projection, clés et capacités."""
     source = """
 import boto3
 db = boto3.client('dynamodb')
@@ -354,6 +374,7 @@ db.create_table(
 
 
 def test_python_clients_in_different_scopes() -> None:
+    """Les clients de même nom dans des fonctions distinctes gardent leur service respectif."""
     source = """
 import boto3
 def bucket():
@@ -368,6 +389,7 @@ def table():
 
 
 def test_cloudformation_substitution_map_and_intrinsic_join() -> None:
+    """Les substitutions explicites et jointures utilisent les références sans commentaire injecté."""
     source = """
 Parameters:
   Stage:
@@ -394,6 +416,7 @@ Resources:
 
 
 def test_cloudformation_invalid_type_is_unmapped() -> None:
+    """Un type CloudFormation non textuel devient UNMAPPED avec une confiance nulle."""
     source = "Resources:\n  Invalid:\n    Type: [not, a, type]\n"
     (finding,) = CloudFormationDetector().detect(Path("stack.yml"), source)
     assert finding.tf_type == "UNMAPPED"
@@ -401,6 +424,7 @@ def test_cloudformation_invalid_type_is_unmapped() -> None:
 
 
 def test_cloudformation_recursive_yaml_does_not_crash() -> None:
+    """Les alias YAML récursifs sont ignorés sans faire échouer le détecteur."""
     source = """
 Resources:
   Bucket:
@@ -414,6 +438,7 @@ Resources:
 def test_cloudformation_rejects_alias_graph_before_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Un graphe d'alias YAML est rejeté avant tout chargement susceptible de le développer."""
     source = """
 Metadata:
   Base: &base [x, x, x, x]
@@ -427,6 +452,7 @@ Resources:
 """
 
     def forbidden_load(*args: object, **kwargs: object) -> None:
+        """Faire échouer le test si le chargeur reçoit des arguments, sans charger le YAML."""
         pytest.fail("Le chargement ne doit jamais développer les alias YAML.")
 
     monkeypatch.setattr("terraformizer.detectors.cloudformation.yaml.load", forbidden_load)
@@ -434,6 +460,7 @@ Resources:
 
 
 def test_cloudformation_raw_strings_and_identifiers_are_safe() -> None:
+    """Les chaînes et attributs hostiles sont neutralisés dans les expressions CloudFormation."""
     source = json.dumps(
         {
             "Resources": {
@@ -479,6 +506,7 @@ def test_cloudformation_raw_strings_and_identifiers_are_safe() -> None:
 
 
 def test_cloudformation_sub_literal_cannot_inject_interpolation() -> None:
+    """Les littéraux de substitution ne peuvent introduire d'interpolation HCL active."""
     source = json.dumps(
         {
             "Resources": {
@@ -504,6 +532,7 @@ def test_cloudformation_sub_literal_cannot_inject_interpolation() -> None:
 
 
 def test_python_policy_literals_cannot_supply_raw_expressions() -> None:
+    """Les politiques boto3 littérales ne peuvent fournir une expression HCL brute arbitraire."""
     source = """
 import boto3
 iam = boto3.client('iam')
@@ -521,6 +550,7 @@ iam.create_role(RoleName='role', AssumeRolePolicyDocument={
 
 
 def test_python_tuples_and_sets_become_lists() -> None:
+    """Les tuples et ensembles Python deviennent des listes aux éléments ordonnés comme attendu."""
     source = """
 import boto3
 ec2 = boto3.client('ec2')
@@ -533,6 +563,7 @@ ec2.run_instances(ImageId='ami-x', SecurityGroupIds={'sg-b', 'sg-a'})
 
 
 def test_python_fixture_style_tags_and_environment_expression() -> None:
+    """Les tags nomment la ressource et les accès à l'environnement deviennent des variables."""
     source = """
 import os
 import boto3
@@ -553,6 +584,7 @@ ec2.run_instances(
 
 
 def test_python_lambda_publish_and_environment_object() -> None:
+    """Publish est signalé comme ignoré et les variables Lambda sont rendues sans interpolation."""
     source = """
 import boto3
 client = boto3.client('lambda')
@@ -576,6 +608,7 @@ client.create_function(
     ],
 )
 def test_cloudformation_reserved_source_maps_become_variables(properties: dict) -> None:
+    """Les dictionnaires sources avec __raw__ deviennent des variables plutôt que du HCL injecté."""
     source = json.dumps(
         {
             "Resources": {
@@ -594,6 +627,7 @@ def test_cloudformation_reserved_source_maps_become_variables(properties: dict) 
 
 
 def test_python_reserved_tag_key_remains_literal() -> None:
+    """Un tag boto3 nommé __raw__ reste une clé littérale sans exécuter sa valeur."""
     source = """
 import boto3
 client = boto3.client('s3')
@@ -606,6 +640,7 @@ client.create_bucket(Bucket='bucket', Tags=[{'Key': '__raw__', 'Value': 'file("s
 
 
 def test_generated_raw_survives_dataclass_json_export() -> None:
+    """Une expression brute créée par le détecteur survit à l'export JSON de la dataclass."""
     source = """
 import boto3
 client = boto3.client('ec2')
@@ -626,6 +661,7 @@ client.run_instances(ImageId=ami)
     ],
 )
 def test_cloudformation_reserved_tag_key_remains_literal(tags: list | dict) -> None:
+    """Un tag CloudFormation nommé __raw__ reste littéral et son interpolation est échappée."""
     source = json.dumps(
         {
             "Resources": {
@@ -643,6 +679,7 @@ def test_cloudformation_reserved_tag_key_remains_literal(tags: list | dict) -> N
 
 
 def test_python_reserved_tag_key_preserves_dynamic_value() -> None:
+    """Un tag boto3 nommé __raw__ conserve une valeur dynamique sous forme de variable."""
     source = """
 import boto3
 client = boto3.client('s3')
@@ -656,6 +693,7 @@ client.create_bucket(Bucket='bucket', Tags=[{'Key': '__raw__', 'Value': dynamic_
 
 @pytest.mark.parametrize("literal", ["b'bytes'", "1j", "1e999"])
 def test_python_unsupported_literal_scalars_become_variables(literal: str) -> None:
+    """Les scalaires Python non représentables deviennent des variables sérialisables en JSON."""
     source = f"""
 import boto3
 client = boto3.client('ec2')
@@ -671,6 +709,7 @@ client.run_instances(ImageId={literal})
 
 @pytest.mark.parametrize("scalar", ["2026-01-01", "2026-01-01T10:30:00Z", ".nan", ".inf"])
 def test_cloudformation_unsupported_yaml_scalars_become_variables(scalar: str) -> None:
+    """Les dates et nombres YAML non finis deviennent des variables sérialisables en JSON."""
     source = f"""
 Resources:
   Bucket:

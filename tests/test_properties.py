@@ -1,4 +1,11 @@
-"""Propriétés générales des normaliseurs et sérialiseurs."""
+"""Vérifier les invariants des normaliseurs et sérialiseurs par génération de données.
+
+Entrées : exemples Hypothesis et détections locales ; sorties : assertions
+sur les noms, arguments, échappements et copies.
+Sécurité : aucun accès cloud ni exécution des sources analysées ; un subprocess
+Bash contrôlé exécute printf pour vérifier le quoting des arguments, tandis
+que les autres propriétés manipulent les résultats de l'analyse statique.
+"""
 
 from __future__ import annotations
 

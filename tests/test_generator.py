@@ -1,4 +1,10 @@
-"""Vérifications du rendu HCL et des scripts d'import."""
+"""Vérifier le rendu HCL et la sûreté des scripts proposés à partir de Finding.
+
+Entrées : détections construites localement ; sorties : assertions sur les textes.
+Sécurité : aucune analyse ne contacte le cloud ou n'exécute les sources ;
+un subprocess Bash contrôlé vérifie la syntaxe puis les arguments d'un script
+généré avec un faux terraform, sans import réel.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +16,15 @@ from terraformizer.models import Finding
 
 
 def resource(**kwargs: object) -> Finding:
+    """Construire une détection de test avec des valeurs locales par défaut.
+
+    Args:
+        **kwargs: Champs de Finding remplaçant les valeurs par défaut.
+
+    Returns:
+        Nouvelle détection indépendante ; les champs invalides sont rejetés
+        par le constructeur, sans lecture de source ni accès cloud.
+    """
     values = dict(
         provider="aws",
         tf_type="aws_instance",
@@ -24,6 +39,7 @@ def resource(**kwargs: object) -> Finding:
 
 
 def test_nested_blocks_lists_raw_tags_and_alignment() -> None:
+    """Le rendu conserve blocs imbriqués, listes, expressions, tags et provenance alignée."""
     finding = resource(
         attributes={
             "name": "web",
@@ -47,6 +63,7 @@ def test_nested_blocks_lists_raw_tags_and_alignment() -> None:
 
 
 def test_deduplication_does_not_mutate_and_generates_variables() -> None:
+    """La génération déduplique sans mutation, ignore les diagnostics et déclare les variables."""
     findings = [
         resource(import_id="i-123", attributes={"ami": {"__raw__": "var.ami"}}),
         resource(),
@@ -70,6 +87,7 @@ def test_deduplication_does_not_mutate_and_generates_variables() -> None:
 
 
 def test_strings_and_comments_cannot_inject_hcl() -> None:
+    """Les chaînes et commentaires échappés ne peuvent injecter de ressource ou de template HCL."""
     text = render_resource(
         resource(
             original='command\nresource "bad" "bad" {}',
@@ -84,6 +102,7 @@ def test_strings_and_comments_cannot_inject_hcl() -> None:
 
 
 def test_multiline_string_delimiter_collision() -> None:
+    """Les chaînes multilignes évitent les collisions de délimiteur et conservent leur terminaison."""
     text = render_resource(resource(attributes={"user_data": "EOT\nhello\n"}))
     assert "<<-EOT_" in text
     assert "\n  EOT_\n" in text
@@ -92,6 +111,7 @@ def test_multiline_string_delimiter_collision() -> None:
 
 
 def test_import_identifier_is_shell_quoted(tmp_path: Path) -> None:
+    """Le quoting conserve un identifiant hostile sans substitution lors d'une exécution simulée."""
     identifier = "bucket'$(touch UNEXPECTED)\nother"
     text = generate_files([resource(import_id=identifier)])["import.sh"]
     script = tmp_path / "import.sh"
@@ -107,6 +127,7 @@ def test_import_identifier_is_shell_quoted(tmp_path: Path) -> None:
 
 
 def test_all_providers_and_empty_generation() -> None:
+    """Chaque fournisseur reçoit sa configuration et une entrée vide ne déclare aucun fournisseur."""
     files = generate_files(
         [
             resource(),

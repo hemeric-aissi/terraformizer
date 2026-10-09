@@ -1,4 +1,11 @@
-"""Conversion statique et prudente des modèles CloudFormation."""
+"""Convertit des modèles CloudFormation YAML/JSON en ressources candidates.
+
+Entrées : chemin et texte du modèle ; sorties : Findings Terraform, références
+approximatives et TODO, ou UNMAPPED pour les types inconnus. Le chargement sûr
+préserve les balises comme données et rejette les alias YAML avant construction.
+Aucune exécution du modèle, résolution auprès d'AWS ni connexion au cloud :
+les fonctions intrinsèques deviennent du texte HCL interne, jamais du code évalué.
+"""
 
 from __future__ import annotations
 
@@ -13,16 +20,17 @@ from terraformizer.detectors.base import Detector, slugify
 from terraformizer.detectors.python_boto3 import _dynamodb, _hcl, _literal, _Raw, _snake, _tags
 from terraformizer.models import Finding
 
+# Attribut GetAtt -> champ Terraform : approximations communes, pas schéma par type.
 _GETATT_FIELDS: dict[str, str] = {
     "Arn": "arn",
     "PublicIp": "public_ip",
     "PrivateIp": "private_ip",
     "PublicDnsName": "public_dns",
     "PrivateDnsName": "private_dns",
-    "DNSName": "bucket_domain_name",
+    "DNSName": "bucket_domain_name",  # Convention S3, à vérifier pour les autres types.
     "DomainName": "bucket_domain_name",
     "RegionalDomainName": "bucket_regional_domain_name",
-    "Endpoint.Address": "address",
+    "Endpoint.Address": "address",  # Un chemin CloudFormation devient un champ Terraform.
     "Endpoint.Port": "port",
     "QueueName": "name",
     "Name": "name",
@@ -30,6 +38,7 @@ _GETATT_FIELDS: dict[str, str] = {
     "VpcId": "id",
 }
 
+# Type CloudFormation -> type Terraform pris en charge ; absent signifie UNMAPPED.
 _TYPES = {
     "AWS::EC2::Instance": "aws_instance",
     "AWS::S3::Bucket": "aws_s3_bucket",
@@ -44,6 +53,8 @@ _TYPES = {
     "AWS::RDS::DBInstance": "aws_db_instance",
 }
 
+# Type Terraform -> {propriété CloudFormation: attribut Terraform}, renommages simples.
+# Tags, politiques JSON, règles et blocs DynamoDB/Lambda nécessitent un traitement séparé.
 _FIELDS = {
     "aws_instance": {
         "ImageId": "ami",
@@ -51,6 +62,7 @@ _FIELDS = {
         "KeyName": "key_name",
         "SubnetId": "subnet_id",
         "SecurityGroupIds": "vpc_security_group_ids",
+        # CloudFormation attend une valeur base64 ; ce champ évite un réencodage.
         "UserData": "user_data_base64",
         "IamInstanceProfile": "iam_instance_profile",
         "Monitoring": "monitoring",
@@ -104,7 +116,7 @@ _FIELDS = {
     },
     "aws_sqs_queue": {
         "QueueName": "name",
-        "VisibilityTimeout": "visibility_timeout_seconds",
+        "VisibilityTimeout": "visibility_timeout_seconds",  # Même unité, nom explicite en HCL.
         "MessageRetentionPeriod": "message_retention_seconds",
         "DelaySeconds": "delay_seconds",
         "MaximumMessageSize": "max_message_size",
@@ -129,7 +141,7 @@ _FIELDS = {
         "DBName": "db_name",
         "MasterUsername": "username",
         "MasterUserPassword": "password",
-        "VPCSecurityGroups": "vpc_security_group_ids",
+        "VPCSecurityGroups": "vpc_security_group_ids",  # Liste d'identifiants, pas de blocs.
         "DBSubnetGroupName": "db_subnet_group_name",
         "MultiAZ": "multi_az",
         "StorageType": "storage_type",
@@ -143,11 +155,25 @@ _FIELDS = {
 
 
 class _TemplateLoader(yaml.SafeLoader):
-    """Charge les balises CloudFormation sans constructeur exécutable."""
+    """Charge les types YAML sûrs et conserve les balises locales comme données.
+
+    Le constructeur multiple est limité à cette sous-classe : SafeLoader global
+    n'est pas modifié. Le rejet des alias appartient à detect, pas à ce chargeur.
+    """
 
 
 def _intrinsic(loader: _TemplateLoader, tag: str, node: yaml.Node) -> dict[str, Any]:
-    """Préserve les balises comme données ordinaires."""
+    """Préserve une balise courte, même inconnue, pour sa résolution ultérieure.
+
+    Args:
+        loader: Chargeur sûr recevant la balise, sans constructeur Python arbitraire.
+        tag: Suffixe après ! fourni par le constructeur multiple.
+        node: Scalaire, séquence ou mapping YAML à construire comme données.
+
+    Returns:
+        Dict à une clé : Ref/Condition sans préfixe, les autres sous Fn::*.
+        Une balise inconnue n'est ni exécutée ni résolue ici.
+    """
     if isinstance(node, yaml.ScalarNode):
         value = loader.construct_scalar(node)
     elif isinstance(node, yaml.SequenceNode):
@@ -157,21 +183,38 @@ def _intrinsic(loader: _TemplateLoader, tag: str, node: yaml.Node) -> dict[str, 
     return {tag if tag in ("Ref", "Condition") else f"Fn::{tag}": value}
 
 
+# Un seul constructeur multiple couvre !Ref, !GetAtt, !Sub et les balises inconnues.
 _TemplateLoader.add_multi_constructor("!", _intrinsic)
 
 
 class CloudFormationDetector(Detector):
-    """Détecte les ressources et traduit les références entre ressources."""
+    """Détecte les ressources et propose une traduction locale, non un déploiement.
+
+    Les tables limitent le périmètre ; les références et directives demandant une
+    sémantique CloudFormation complète sont explicitement signalées pour vérification.
+    """
 
     name = "cloudformation"
     extensions = (".yaml", ".yml", ".json", ".template")
 
     def detect(self, path: Path, content: str) -> list[Finding]:
-        """Charge un modèle sans alias YAML et retourne ses ressources connues ou non mappées."""
+        """Charge les données du modèle et convertit ses ressources sans accès AWS.
+
+        Args:
+            path: Chemin de provenance et filtre d'extension, sans lecture du fichier.
+            content: Texte YAML ou JSON contenant Resources ou la version du modèle.
+
+        Returns:
+            Findings connus ou UNMAPPED ; liste vide si hors périmètre, document
+            invalide, alias YAML présent ou bloc Resources non dictionnaire.
+            Les propriétés non convertibles et approximations deviennent des TODO.
+            Les paramètres ne sont pas évalués depuis leurs valeurs par défaut.
+        """
         if not self.handles(path):
             return []
         try:
-            # Rejeter les alias avant chargement empêche leur expansion exponentielle.
+            # Rejeter tout alias avant construction bloque graphes récursifs et « billion laughs ».
+            # Même les alias bénins sont exclus : SafeLoader seul ne borne pas ces graphes.
             if any(isinstance(token, yaml.AliasToken) for token in yaml.scan(content)):
                 return []
             template = yaml.load(content, Loader=_TemplateLoader)
@@ -191,6 +234,7 @@ class CloudFormationDetector(Detector):
             for logical, resource in resources.items()
             if isinstance(logical, str) and isinstance(resource, dict)
         }
+        # La table complète permet les références vers des ressources déclarées plus loin.
         parameters = template.get("Parameters", {})
         findings = []
         for logical, resource in resources.items():
@@ -201,6 +245,20 @@ class CloudFormationDetector(Detector):
             notes: list[str] = []
 
             def reference(target: str, attribute: str | None = None) -> dict[str, str]:
+                """Produit une référence HCL approximative, sans interroger le cloud.
+
+                Args:
+                    target: Identifiant logique, paramètre ou pseudo-paramètre AWS::*.
+                    attribute: Attribut GetAtt ; None pour Ref.
+
+                Returns:
+                    _Raw : adresse Terraform, var.* pour un paramètre, ou adresse
+                    aws_RESOURCE à compléter si la cible est inconnue/non mappée.
+
+                Ref utilise id sauf SNS (arn) ; GetAtt inconnu est renommé avec TODO.
+                Les pseudo-paramètres, dont AWS::NoValue, restent des variables :
+                aucune suppression de propriété ni valeur AWS n'est simulée.
+                """
                 if target.startswith("AWS::"):
                     notes.append(f"TODO : fournir la valeur du pseudo-paramètre {target}.")
                     return _Raw(f"var.{slugify(target.replace('::', '_'))}")
@@ -228,6 +286,19 @@ class CloudFormationDetector(Detector):
                 return _Raw(f"aws_RESOURCE.{slugify(target)}.{suffix}")
 
             def resolve(value: Any) -> Any:
+                """Traduit récursivement les intrinsèques reconnues en expressions HCL.
+
+                Args:
+                    value: Propriété normalisée, liste, dict ou _Raw interne.
+
+                Returns:
+                    Structure résolue pour Ref, GetAtt (texte ou paire), Sub, Join
+                    et Base64, ou une structure ordinaire aux clés conservées.
+
+                Une intrinsèque inconnue ou mal formée dans un dict à clé unique
+                devient var.* avec TODO. La récursion reste locale ; detect traite
+                un dépassement de profondeur.
+                """
                 if isinstance(value, _Raw):
                     return value
                 if isinstance(value, list):
@@ -255,6 +326,16 @@ class CloudFormationDetector(Detector):
                             notes.append("TODO : vérifier l'approximation de Fn::Sub.")
 
                             def replace(match: re.Match[str]) -> Any:
+                                """Résout un jeton Sub en donnant priorité à la table locale.
+
+                                Args:
+                                    match: Correspondance ${jeton} dans le texte Sub.
+
+                                Returns:
+                                    Texte littéral pour ${!jeton} ou scalaire local,
+                                    _Raw tostring pour une référence/expression ; une
+                                    substitution complexe devient une variable avec TODO.
+                                """
                                 token = match.group(1)
                                 if token.startswith("!"):
                                     return "${" + token[1:] + "}"
@@ -276,6 +357,8 @@ class CloudFormationDetector(Detector):
                                 return _Raw(f"tostring({replacement})")
 
                             pieces = []
+                            # Séparer texte et expressions permet à _hcl d'échapper le littéral,
+                            # sans neutraliser les seules références que nous avons produites.
                             cursor = 0
                             for match in re.finditer(r"\$\{([^}]+)\}", text):
                                 pieces.append(text[cursor : match.start()])
@@ -284,6 +367,7 @@ class CloudFormationDetector(Detector):
                             pieces.append(text[cursor:])
                             return _Raw(f'join("", {_hcl(pieces)})')
                     if key == "Fn::Join" and isinstance(item, list) and len(item) == 2:
+                        # Le séparateur et la liste sont résolus, sans concaténation exécutée ici.
                         return _Raw(f"join({_hcl(resolve(item[0]))}, {_hcl(resolve(item[1]))})")
                     if key == "Fn::Base64":
                         return _Raw(f"base64encode({_hcl(resolve(item))})")
@@ -413,7 +497,15 @@ class CloudFormationDetector(Detector):
 
     @staticmethod
     def _original(resource: dict[str, Any]) -> str:
-        """Préserve une représentation sans échouer sur les alias YAML récursifs."""
+        """Conserve une représentation de provenance même pour une structure atypique.
+
+        Args:
+            resource: Données de la ressource ; les objets non JSON sont convertis en texte.
+
+        Returns:
+            JSON lisible, ou repr si un cycle ou une profondeur excessive empêche JSON.
+            Ce repli reste défensif, même si detect rejette les alias YAML en amont.
+        """
         try:
             return json.dumps(resource, ensure_ascii=False, default=str)
         except (ValueError, RecursionError):
@@ -421,7 +513,16 @@ class CloudFormationDetector(Detector):
 
     @staticmethod
     def _line(content: str, logical: str) -> int:
-        """Retrouve au mieux la ligne du nom logique."""
+        """Repère approximativement un nom logique sans reconstruire la syntaxe YAML.
+
+        Args:
+            content: Texte original du modèle.
+            logical: Identifiant échappé pour être recherché littéralement.
+
+        Returns:
+            Première ligne correspondante, à partir de 1, ou 1 si absente.
+            Un nom identique hors Resources peut donc produire une ligne approximative.
+        """
         for index, line in enumerate(content.splitlines(), 1):
             if re.search(rf'["\']?{re.escape(logical)}["\']?\s*:', line):
                 return index
@@ -429,7 +530,18 @@ class CloudFormationDetector(Detector):
 
     @staticmethod
     def _rules(value: Any, notes: list[str]) -> list[dict[str, Any]]:
-        """Traduit les règles réseau en blocs ingress ou egress."""
+        """Traduit une liste de règles en blocs réseau sans inventer les champs inconnus.
+
+        Args:
+            value: Règles ingress/egress déjà normalisées et références déjà résolues.
+            notes: TODO enrichis pour les formes dynamiques et propriétés non mappées.
+
+        Returns:
+            Blocs Terraform ; liste vide si l'entrée n'est pas une liste.
+            Les éléments non dict sont ignorés, les destinations scalaires deviennent
+            des listes et les ports absents valent 0. Ce choix demande vérification
+            selon le protocole ; aucun protocole manquant n'est déduit.
+        """
         if not isinstance(value, list):
             notes.append("TODO : règles de groupe de sécurité dynamiques non converties.")
             return []
@@ -457,6 +569,7 @@ class CloudFormationDetector(Detector):
                     "SourcePrefixListId",
                     "DestinationPrefixListId",
                 ):
+                    # Source (ingress) et destination (egress) partagent les champs de bloc.
                     target = {
                         "CidrIp": "cidr_blocks",
                         "CidrIpv6": "ipv6_cidr_blocks",
@@ -468,6 +581,7 @@ class CloudFormationDetector(Detector):
                     converted.setdefault(target, []).append(item)
                 else:
                     notes.append(f"TODO : propriété de règle non prise en charge : {source}.")
+            # Fournir les deux ports attendus sans écraser un port explicitement défini.
             converted.setdefault("from_port", 0)
             converted.setdefault("to_port", 0)
             rules.append(converted)

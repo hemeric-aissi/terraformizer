@@ -1,4 +1,11 @@
-"""Rapports lisibles et exportables des détections."""
+"""Présenter les détections locales dans le terminal, en JSON ou en Markdown.
+
+Entrées : objets Finding et destinations locales pour les exports.
+Sorties : tableau de synthèse ou rapports UTF-8, sans analyse supplémentaire.
+Sécurité : aucune exécution de contenu ni aucun accès cloud ; les valeurs
+proviennent d'une analyse statique et peuvent contenir des données sensibles.
+La CLI vérifie les liens symboliques avant d'appeler les fonctions d'écriture.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +21,14 @@ from terraformizer.models import Finding
 
 
 def print_summary(findings: list[Finding]) -> None:
-    """Affiche un tableau de synthèse dans le terminal."""
+    """Afficher les ressources et leur confiance sans interpréter leur balisage.
+
+    Args:
+        findings: Détections à afficher dans leur ordre courant.
+
+    Une liste vide produit un tableau sans lignes ; les couleurs expriment un
+    niveau heuristique, pas une garantie de validité du Terraform.
+    """
     table = Table(title="Ressources détectées")
     for column in ("Provider", "Type", "Nom", "Fichier", "Ligne", "Confiance", "Notes"):
         table.add_column(column)
@@ -39,7 +53,16 @@ def print_summary(findings: list[Finding]) -> None:
 
 
 def write_json(findings: list[Finding], dest: Path) -> None:
-    """Écrit les findings au format JSON UTF-8."""
+    """Exporter les détections et leur adresse en JSON UTF-8.
+
+    Args:
+        findings: Détections sérialisables ; une liste vide produit [].
+        dest: Fichier à remplacer, dont le dossier parent doit déjà exister.
+
+    Le chemin source est converti en notation POSIX ; les erreurs d'écriture
+    et de sérialisation remontent à l'appelant. Aucun contrôle des liens ni
+    masquage des données sources n'est effectué ici.
+    """
     rows = []
     for finding in findings:
         row = asdict(finding)
@@ -50,12 +73,28 @@ def write_json(findings: list[Finding], dest: Path) -> None:
 
 
 def _cell(value: object) -> str:
-    """Protège les séparateurs et retours à la ligne d'une cellule."""
+    """Échapper les séparateurs et retours à la ligne d'une cellule Markdown.
+
+    Args:
+        value: Valeur convertie en texte, y compris None.
+
+    Returns:
+        Texte avec barres et antislashs échappés, sauts de ligne remplacés par
+        <br> ; ce traitement n'est pas une désinfection HTML générale.
+    """
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
 
 
 def write_markdown(findings: list[Finding], dest: Path) -> None:
-    """Écrit un tableau Markdown des détections."""
+    """Exporter un tableau Markdown des ressources et de leurs limites.
+
+    Args:
+        findings: Détections dans l'ordre du rapport ; la liste peut être vide.
+        dest: Fichier à remplacer, dont le dossier parent doit déjà exister.
+
+    Une liste vide conserve les en-têtes ; les erreurs d'écriture remontent
+    à l'appelant, qui doit contrôler les liens symboliques si nécessaire.
+    """
     lines = [
         "# Rapport terraformizer",
         "",

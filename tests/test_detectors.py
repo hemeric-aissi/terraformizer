@@ -1,4 +1,10 @@
-"""Tests des détecteurs Bash, sans exécution des scripts analysés."""
+"""Vérifier l'analyse statique des commandes Bash AWS, Google Cloud et Azure.
+
+Entrées : scripts en mémoire ; sorties : assertions sur les ressources,
+arguments, limites et échappements.
+Sécurité : aucun accès cloud ni exécution des scripts analysés ; les appels
+d'exécution interdits sont remplacés par un piège dans le test dédié.
+"""
 
 from __future__ import annotations
 
@@ -565,6 +571,7 @@ def test_source_is_never_executed(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
     def forbidden(*args: object, **kwargs: object) -> None:
+        """Faire échouer le test pour tout appel d'exécution, quels que soient ses arguments."""
         raise AssertionError("Le détecteur ne doit jamais lancer un processus.")
 
     monkeypatch.setattr(os, "system", forbidden)

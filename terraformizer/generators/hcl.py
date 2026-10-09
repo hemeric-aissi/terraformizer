@@ -1,4 +1,10 @@
-"""Rendu HCL et commandes d'import, sans exécution."""
+"""Transformer des findings en contenus de fichiers HCL et de script d'import.
+
+Les sorties sont des chaînes à écrire par l'appelant : ce module n'accède pas
+au cloud, n'exécute ni Terraform ni le shell et ne lit pas les fichiers sources.
+Les littéraux non fiables sont échappés ; les marqueurs __raw__ sont réservés
+aux expressions construites par les détecteurs lors de leur analyse statique.
+"""
 
 from __future__ import annotations
 
@@ -11,20 +17,36 @@ from typing import Any
 
 from terraformizer.models import Finding
 
+# Fournisseur -> préambule HCL ; seules ces clés sont admises au rendu.
+# Les paramètres restent des références Terraform, jamais des requêtes cloud.
 PROVIDERS = {
     "aws": 'provider "aws" {\n  region = var.aws_region\n}\n',
     "google": (
         'provider "google" {\n  project = var.google_project\n  region  = var.google_region\n}\n'
     ),
     "azurerm": (
+        # La data source sera résolue par Terraform, pas pendant la génération ;
+        # elle permet notamment de référencer le tenant sans inventer sa valeur.
         'provider "azurerm" {\n  features {}\n}\n\ndata "azurerm_client_config" "current" {}\n'
     ),
 }
+# Fournisseur -> contrainte du schéma ciblé par les mappings des détecteurs.
 PROVIDER_VERSIONS = {"aws": "~> 5.0", "google": "~> 5.0", "azurerm": "~> 3.0"}
 
 
 def deduplicate(findings: Iterable[Finding]) -> list[Finding]:
-    """Rend les adresses uniques sans modifier les findings d'origine."""
+    """Rendre les adresses uniques sans altérer les résultats de détection.
+
+    Args:
+        findings: Résultats dans l'ordre de détection, éventuellement un itérateur.
+
+    Returns:
+        Copies des findings, avec noms et notes ajustés en cas de collision.
+
+    Les suffixes déjà occupés sont sautés ; deux types différents peuvent garder
+    le même nom. Les références internes ne sont pas réécrites : une note exige
+    leur vérification lorsque le nom change.
+    """
     used: set[str] = set()
     result: list[Finding] = []
     for finding in findings:
@@ -34,6 +56,9 @@ def deduplicate(findings: Iterable[Finding]) -> list[Finding]:
             name = f"{finding.name}_{index}"
             index += 1
         used.add(f"{finding.tf_type}.{name}")
+        # Copier les notes avant d'y ajouter un TODO évite de polluer le rapport
+        # source. replace est une copie superficielle : les attributs, non modifiés
+        # ici, restent partagés, mais le finding original conserve son nom.
         notes = list(finding.notes)
         if name != finding.name:
             notes.append(
@@ -45,23 +70,45 @@ def deduplicate(findings: Iterable[Finding]) -> list[Finding]:
 
 
 def _quote(value: str) -> str:
-    """Cite une chaîne sans activer les interpolations HCL."""
+    """Citer un littéral Unicode sans activer d'interpolation ni directive HCL.
+
+    JSON protège les quotes et contrôles ; ${ et %{ nécessitent en plus
+    l'échappement propre aux templates Terraform, même dans une chaîne citée.
+    """
     return json.dumps(value.replace("${", "$${").replace("%{", "%%{"), ensure_ascii=False)
 
 
 def _value(value: Any, indent: int = 0) -> str:
-    """Sérialise un littéral ou une expression brute contrôlée."""
+    """Sérialiser une valeur en préservant le contenu des chaînes multilignes.
+
+    Args:
+        value: Littéral, collection ou expression __raw__ contrôlée.
+        indent: Indentation du contexte pour fermer maps et heredocs.
+
+    Returns:
+        Expression HCL, éventuellement répartie sur plusieurs lignes.
+
+    Les heredocs évitent d'échapper chaque retour à la ligne ; leur délimiteur
+    est choisi sans collision et chomp retire le retour ajouté quand la source
+    n'en avait pas. Les nombres non finis et types inconnus sont refusés.
+    """
     if isinstance(value, dict) and "__raw__" in value:
+        # Cette échappatoire suppose un marqueur créé par un détecteur, jamais
+        # une clé arbitraire provenant directement d'un document non fiable.
         return str(value["__raw__"])
     if isinstance(value, str):
         if "\n" not in value:
             return _quote(value)
         delimiter = "EOT"
+        # Une ligne du contenu égale au délimiteur fermerait le heredoc trop tôt.
+        # strip tient compte des espaces tolérés par la forme indentée <<-.
         while delimiter in {line.strip() for line in value.splitlines()}:
             delimiter += "_"
         escaped = value.replace("${", "$${").replace("%{", "%%{")
         if escaped.endswith("\n"):
             return f"<<-{delimiter}\n{escaped}{' ' * indent}{delimiter}"
+        # HCL impose une newline avant la fermeture ; chomp empêche cette
+        # contrainte de syntaxe d'ajouter une newline absente du littéral source.
         return f"chomp(<<-{delimiter}\n{escaped}\n{' ' * indent}{delimiter}\n{' ' * indent})"
     if value is None:
         return "null"
@@ -85,7 +132,19 @@ def _value(value: Any, indent: int = 0) -> str:
 
 
 def _attributes(attributes: dict[str, Any], indent: int) -> list[str]:
-    """Rend les attributs alignés et les blocs imbriqués."""
+    """Distinguer les attributs affectés des blocs attendus par les providers.
+
+    Args:
+        attributes: Attributs selon la convention commune des détecteurs.
+        indent: Nombre d'espaces devant chaque ligne du niveau courant.
+
+    Returns:
+        Lignes HCL avec blocs imbriqués et alignement des attributs simples.
+
+    Un dict ordinaire représente un bloc, une liste non vide de dicts des blocs
+    répétés. tags reste une map affectée avec « = ». Les expressions __raw__,
+    listes vides ou mixtes sont des valeurs simples, pas des blocs répétés.
+    """
     simple = [
         key
         for key, value in attributes.items()
@@ -104,6 +163,8 @@ def _attributes(attributes: dict[str, Any], indent: int) -> list[str]:
     for key, value in attributes.items():
         if key in simple:
             if key == "tags" and isinstance(value, dict) and "__raw__" not in value:
+                # L'ouverture d'une map tags suit le format Terraform sans
+                # l'alignement réservé aux autres affectations de ce niveau.
                 lines.append(f"{prefix}{key} = {_value(value, indent)}")
                 continue
             lines.append(f"{prefix}{key:<{width}} = {_value(value, indent)}")
@@ -117,12 +178,26 @@ def _attributes(attributes: dict[str, Any], indent: int) -> list[str]:
 
 
 def _comment(value: str) -> str:
-    """Maintient chaque commentaire sur une seule ligne."""
+    """Empêcher qu'un retour à la ligne source sorte du commentaire généré.
+
+    Les lignes vides ou multiples sont aplaties, sans interpréter leur contenu ;
+    une source non fiable ne peut ainsi ajouter une ligne de code HCL.
+    """
     return " ".join(str(value).splitlines())
 
 
 def render_resource(finding: Finding) -> str:
-    """Produit une ressource et les avertissements de conversion."""
+    """Rendre une ressource avec la provenance et les TODO de conversion.
+
+    Args:
+        finding: Résultat dont type et nom ont été normalisés par le détecteur.
+
+    Returns:
+        Bloc resource terminé par un retour à la ligne.
+
+    Les textes source et notes sont réduits à une ligne pour rester des
+    commentaires ; l'extrait d'origine est tronqué pour limiter le bruit.
+    """
     lines = [
         f"# Source : {_comment(str(finding.source_file))}:{finding.line} "
         f"(confiance {finding.confidence:.0%})",
@@ -136,9 +211,20 @@ def render_resource(finding: Finding) -> str:
 
 
 def _raw_variables(value: Any) -> set[str]:
-    """Collecte les variables mentionnées dans les expressions brutes."""
+    """Collecter les variables des expressions contrôlées, pas des littéraux.
+
+    La recherche descend dans les maps et listes, y compris vides. Elle reste
+    lexicale, sans parser HCL : seules les formes var.identifiant sont reconnues
+    et les références répétées ne créent qu'une déclaration.
+    """
     if isinstance(value, dict):
         if "__raw__" in value:
+            # \b impose une frontière de mot avant « var » (pas « myvar »).
+            # var\. exige le namespace et son point littéral.
+            # Le groupe commence par une lettre ASCII ou _, puis accepte aussi
+            # les chiffres ; il capture le nom, sans index ni attribut suivant.
+            # On n'applique pas cette regex aux chaînes littérales, où « var.x »
+            # peut être du texte et ne nécessite aucune déclaration Terraform.
             return set(re.findall(r"\bvar\.([a-zA-Z_][a-zA-Z0-9_]*)", str(value["__raw__"])))
         return set().union(*(_raw_variables(item) for item in value.values()))
     if isinstance(value, list):
@@ -147,7 +233,19 @@ def _raw_variables(value: Any) -> set[str]:
 
 
 def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
-    """Génère les providers, ressources, variables et imports nécessaires."""
+    """Préparer les fichiers sans écrire sur disque ni lancer d'import.
+
+    Args:
+        findings: Résultats de détection, consommés une seule fois.
+
+    Returns:
+        Dictionnaire nom de fichier -> contenu HCL ou script Bash.
+
+    ERROR, UNMAPPED et fournisseurs inconnus ne produisent pas de ressource.
+    Même sans ressource, les fichiers communs sont rendus. Un import sans ID
+    reste commenté ; les variables dynamiques deviennent des TODO sans valeur
+    inventée et les adresses dupliquées nécessitent une vérification manuelle.
+    """
     resources = deduplicate(
         finding
         for finding in findings
@@ -175,6 +273,8 @@ def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
     files["versions.tf"] = "\n".join(versions) + "\n"
     variables: dict[str, str] = {}
     if "aws" in providers:
+        # Ne pas inventer une région AWS : l'utilisateur doit choisir celle des
+        # ressources existantes avant un import ou un plan.
         variables["aws_region"] = (
             '  type        = string\n  description = "Région AWS des ressources importées"'
         )
@@ -183,6 +283,8 @@ def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
         variables["google_region"] = '  type    = string\n  default = "europe-west1"'
     for resource in resources:
         for name in sorted(_raw_variables(resource.attributes)):
+            # Une référence source ne doit pas écraser la définition d'une
+            # variable déjà nécessaire au provider.
             variables.setdefault(name, '  description = "TODO : valeur issue du code source"')
     files["variables.tf"] = (
         "\n\n".join(f'variable "{name}" {{\n{body}\n}}' for name, body in sorted(variables.items()))
@@ -202,5 +304,10 @@ def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
 
 
 def _shell_quote(value: str) -> str:
-    """Cite un argument Bash, y compris les apostrophes et retours à la ligne."""
+    """Protéger un argument d'import contre toute interprétation par Bash.
+
+    Les quotes simples inhibent $, backticks, séparateurs et retours à la ligne.
+    Une apostrophe ferme la quote, s'écrit entre doubles quotes puis rouvre la
+    quote simple ; même la chaîne vide reste ainsi un argument unique.
+    """
     return "'" + value.replace("'", "'\"'\"'") + "'"

@@ -1,4 +1,10 @@
-"""Interface en ligne de commande de terraformizer."""
+"""Orchestrer l'analyse locale et la génération depuis la ligne de commande.
+
+Entrées : arguments CLI, sources locales et options de filtrage ou de rapport.
+Sorties : synthèse, fichiers proposés et code de retour.
+Sécurité : analyse statique sans accès cloud ni exécution des sources ou imports ;
+seul --fmt autorise un subprocess de formatage Terraform après l'écriture.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +24,18 @@ from terraformizer.scanner import DEFAULT_IGNORES, scan
 
 
 def _confidence(value: str) -> float:
-    """Valide un seuil de confiance compris entre zéro et un."""
+    """Valider un seuil numérique fini compris entre zéro et un inclus.
+
+    Args:
+        value: Représentation textuelle du seuil fournie à argparse.
+
+    Returns:
+        Seuil converti en nombre flottant.
+
+    Raises:
+        ValueError: Texte non convertible en nombre.
+        argparse.ArgumentTypeError: Valeur hors intervalle, infinie ou NaN.
+    """
     result = float(value)
     if not 0.0 <= result <= 1.0:
         raise argparse.ArgumentTypeError("La confiance doit être comprise entre 0 et 1")
@@ -26,7 +43,28 @@ def _confidence(value: str) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Analyse un projet et écrit les propositions de migration."""
+    """Analyser un projet et proposer sa migration sans l'appliquer.
+
+    Args:
+        argv: Arguments sans le nom du programme ; None utilise sys.argv.
+
+    Returns:
+        0 en cas de succès, 1 pour une erreur de chemin, d'analyse ou d'écriture,
+        2 si --fail-on-findings voit une détection avant filtrage ou si
+        --fail-on-filtered en voit après filtrage ; une erreur de fmt avertit
+        seulement et ne change pas ce résultat.
+
+    Raises:
+        SystemExit: Aide, version ou arguments rejetés par argparse.
+
+    La sortie située strictement sous la racine est exclue du scan.
+    --dry-run n'écrit rien et ne lance pas fmt ; sinon les fichiers de sortie
+    qui sont des liens symboliques sont refusés, sans annuler les écritures
+    déjà effectuées. Les chemins de racine et de sortie sont résolus :
+    ce refus ne constitue pas une protection contre toute course concurrente.
+    Aucun import, plan, apply ou script source n'est exécuté et aucun accès
+    cloud n'est effectué ; --fmt seul lance un formatage local contrôlé.
+    """
     parser = argparse.ArgumentParser(
         prog="terraformizer",
         description="Détecte l'infrastructure créée hors Terraform et propose du HCL.",
@@ -80,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out = args.out.resolve()
     ignores = list(DEFAULT_IGNORES)
+    # Exclure la sortie évite de réanalyser les fichiers déjà générés.
     if root.is_dir() and out.is_relative_to(root) and out != root:
         ignores.append(out.relative_to(root).as_posix())
     try:
@@ -97,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             out.mkdir(parents=True, exist_ok=True)
             for name, content in files.items():
                 destination = out / name
+                # Refuser le lien évite d'écraser sa cible potentiellement hors de la sortie.
                 if destination.is_symlink():
                     raise OSError(f"Refus d'écrire dans un lien symbolique : {destination}")
                 destination.write_text(content, encoding="utf-8")
@@ -108,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             for name, writer, modes in reports:
                 if args.report in modes:
                     destination = out / name
+                    # Les rapports doivent protéger les cibles de liens comme les fichiers HCL.
                     if destination.is_symlink():
                         raise OSError(f"Refus d'écrire dans un lien symbolique : {destination}")
                     writer(findings, destination)

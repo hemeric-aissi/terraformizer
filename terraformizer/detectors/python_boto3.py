@@ -1,4 +1,11 @@
-"""Détection statique des créations de ressources avec boto3."""
+"""Convertit statiquement les appels de création boto3 en ressources candidates.
+
+Entrées : chemin et texte Python ; sorties : objets Finding avec attributs Terraform,
+identifiant d'import éventuel et TODO pour les approximations. L'AST est lu sans
+importer le programme, exécuter ses appels ni contacter le cloud. Les expressions
+dynamiques deviennent des variables à compléter, jamais du code Python évalué.
+Les marqueurs HCL internes restent distincts des dictionnaires issus de la source.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,7 @@ from typing import Any
 from terraformizer.detectors.base import Detector, slugify
 from terraformizer.models import Finding
 
+# Méthode boto3 -> (service attendu, type Terraform) : sélection, pas schéma AWS complet.
 _RESOURCES = {
     "run_instances": ("ec2", "aws_instance"),
     "create_bucket": ("s3", "aws_s3_bucket"),
@@ -27,10 +35,13 @@ _RESOURCES = {
     "create_queue": ("sqs", "aws_sqs_queue"),
     "create_topic": ("sns", "aws_sns_topic"),
     "create_repository": ("ecr", "aws_ecr_repository"),
+    # ECS par défaut ; detect distingue EKS grâce au service du client.
     "create_cluster": ("ecs", "aws_ecs_cluster"),
     "create_log_group": ("logs", "aws_cloudwatch_log_group"),
 }
 
+# Méthode -> {argument AWS: attribut Terraform} pour les correspondances directes.
+# Les blocs imbriqués, tags et politiques sont traités à part ; l'inconnu devient TODO.
 _FIELDS = {
     "run_instances": {
         "ImageId": "ami",
@@ -39,8 +50,8 @@ _FIELDS = {
         "SubnetId": "subnet_id",
         "SecurityGroupIds": "vpc_security_group_ids",
         "UserData": "user_data",
-        "Monitoring": "monitoring",
-        "IamInstanceProfile": "iam_instance_profile",
+        "Monitoring": "monitoring",  # Enabled est extrait du dictionnaire AWS.
+        "IamInstanceProfile": "iam_instance_profile",  # Terraform attend le nom, pas l'ARN.
         "EbsOptimized": "ebs_optimized",
     },
     "create_bucket": {"Bucket": "bucket", "ObjectLockEnabledForBucket": "object_lock_enabled"},
@@ -62,7 +73,7 @@ _FIELDS = {
     },
     "create_role": {
         "RoleName": "name",
-        "AssumeRolePolicyDocument": "assume_role_policy",
+        "AssumeRolePolicyDocument": "assume_role_policy",  # Un dictionnaire exige jsonencode.
         "Path": "path",
         "Description": "description",
         "MaxSessionDuration": "max_session_duration",
@@ -116,6 +127,7 @@ _FIELDS = {
         "repositoryName": "name",
         "imageTagMutability": "image_tag_mutability",
     },
+    # Union ECS/EKS : clusterName appartient à ECS, name et roleArn à EKS.
     "create_cluster": {"clusterName": "name", "name": "name", "roleArn": "role_arn"},
     "create_log_group": {
         "logGroupName": "name",
@@ -126,20 +138,55 @@ _FIELDS = {
 
 
 def _snake(value: str) -> str:
-    """Convertit un nom CamelCase en snake_case."""
+    """Sépare les mots CamelCase avant de normaliser leur casse.
+
+    Args:
+        value: Nom de champ à convertir, éventuellement avec un sigle ou des chiffres.
+
+    Returns:
+        Nom en minuscules avec underscores aux frontières reconnues par les deux regex.
+
+    La première regex sépare un mot capitalisé après un caractère ; la seconde
+    sépare une majuscule après une minuscule ou un chiffre. Les sigles consécutifs
+    ne sont pas découpés lettre par lettre ; chaîne vide et séparateurs restent admis.
+    """
     value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value).lower()
 
 
 class _Raw(dict[str, str]):
-    """Distingue les expressions produites des dictionnaires provenant du fichier."""
+    """Marque une expression HCL construite en interne, non une valeur de la source.
+
+    La sous-classe dict accepte la reconstruction par dataclasses.asdict ; JSON
+    conserve sa clé __raw__, mais pas son identité de classe. Ce format reste lisible
+    par le générateur. Il ne constitue pas une validation d'une expression arbitraire.
+    """
 
     def __init__(self, expression: str | dict[str, str] | Iterable[tuple[str, str]]) -> None:
+        """Accepte le texte HCL ou les paires utilisées pour reconstruire le dict.
+
+        Args:
+            expression: Texte interne, dictionnaire ou itérable de paires clé/valeur.
+        """
         super().__init__({"__raw__": expression} if isinstance(expression, str) else expression)
 
 
 def _literal(value: Any, notes: list[str] | None = None, label: str = "literal") -> Any:
-    """Empêche une clé littérale réservée de devenir une expression exécutable."""
+    """Neutralise les valeurs source pouvant être confondues avec du HCL interne.
+
+    Args:
+        value: Valeur littérale ou marqueur _Raw déjà produit par le détecteur.
+        notes: Liste de TODO enrichie sur place, si fournie.
+        label: Contexte servant à nommer les variables de remplacement.
+
+    Returns:
+        Valeur récursivement normalisée ou _Raw pointant vers une variable.
+
+    Un dict source contenant __raw__ est remplacé pour éviter une injection HCL.
+    Pour les tags, cette clé reste une donnée grâce à une sérialisation sûre.
+    Ensembles triés, tuples en listes et scalaires non représentables (dont
+    NaN/infini) sont normalisés ; seuls les _Raw internes passent tels quels.
+    """
     if isinstance(value, _Raw):
         return value
     if isinstance(value, dict):
@@ -173,7 +220,18 @@ def _literal(value: Any, notes: list[str] | None = None, label: str = "literal")
 
 
 def _hcl(value: Any) -> str:
-    """Sérialise une expression sans commentaires incorporés."""
+    """Sérialise des valeurs normalisées sans activer leurs interpolations source.
+
+    Args:
+        value: Scalaire JSON, liste, dict ou expression interne _Raw.
+
+    Returns:
+        Texte HCL : seul un _Raw à clé unique __raw__ sort sans guillemets.
+
+    Les séquences ${ et %{ des chaînes sont échappées pour rester littérales.
+    Les autres scalaires passent par JSON ; normaliser la source avec _literal
+    avant cet appel évite notamment les nombres non finis et objets arbitraires.
+    """
     if isinstance(value, _Raw) and set(value) == {"__raw__"}:
         return value["__raw__"]
     if isinstance(value, dict):
@@ -186,7 +244,16 @@ def _hcl(value: Any) -> str:
 
 
 def _tags(value: Any, notes: list[str]) -> Any:
-    """Convertit les listes de tags AWS en dictionnaire Terraform."""
+    """Convertit les tags sans transformer une clé réservée en expression source.
+
+    Args:
+        value: Dict normalisé ou liste AWS de paires Key/Value.
+        notes: Liste enrichie pour les tags incomplets ou dynamiques.
+
+    Returns:
+        Dict de tags (dernier doublon gagnant), _Raw sûr si __raw__ est une clé,
+        ou valeur initiale avec TODO si sa forme n'est pas reconnue.
+    """
     if isinstance(value, dict):
         return value
     if isinstance(value, list):
@@ -202,7 +269,17 @@ def _tags(value: Any, notes: list[str]) -> Any:
 
 
 def _dynamodb(values: dict[str, Any], attributes: dict[str, Any], notes: list[str]) -> None:
-    """Convertit les blocs et les clés d'une table DynamoDB."""
+    """Complète sur place les blocs DynamoDB que le simple renommage ne couvre pas.
+
+    Args:
+        values: Arguments AWS normalisés, éventuellement ceux d'un index secondaire.
+        attributes: Attributs Terraform à enrichir : clés, capacités, index et flux.
+        notes: TODO pour les éléments incomplets, dynamiques ou non pris en charge.
+
+    Les clés HASH/RANGE deviennent hash_key/range_key ; les index réutilisent cette
+    conversion. Les structures absentes sont ignorées, les listes partielles filtrées.
+    StreamViewType suffit à déduire stream_enabled si StreamEnabled est absent.
+    """
     definitions = values.get("AttributeDefinitions")
     if isinstance(definitions, list):
         attributes["attribute"] = [
@@ -290,13 +367,28 @@ def _dynamodb(values: dict[str, Any], attributes: dict[str, Any], notes: list[st
 
 
 class PythonBoto3Detector(Detector):
-    """Reconnaît les appels boto3 sans importer ni exécuter le programme."""
+    """Reconnaît les créations boto3 par AST, avec suivi approximatif des clients.
+
+    Les alias importés, sessions et liaisons locales limitent les faux positifs ;
+    un récepteur non identifié reste candidat avec TODO, pas preuve d'un appel AWS.
+    """
 
     name = "python_boto3"
     extensions = (".py",)
 
     def detect(self, path: Path, content: str) -> list[Finding]:
-        """Analyse les appels de création et préserve les valeurs dynamiques."""
+        """Analyse les créations sans évaluer les expressions du programme.
+
+        Args:
+            path: Chemin de provenance et filtre d'extension, sans lecture du fichier.
+            content: Texte Python à analyser avec ast.parse.
+
+        Returns:
+            Findings AWS, ou liste vide pour une source hors périmètre ou invalide.
+            Les valeurs dynamiques deviennent var.* avec TODO ; les **kwargs et
+            arguments positionnels de création ne sont pas développés. Le suivi
+            des liaisons ne simule ni l'ordre d'exécution ni les branches Python.
+        """
         if not self.handles(path) or not re.search(r"\bboto3\b|\bbotocore\b", content):
             return []
         try:
@@ -335,6 +427,15 @@ class PythonBoto3Detector(Detector):
         }
 
         def scopes(node: ast.AST) -> list[ast.AST]:
+            """Ordonne les portées englobantes pour rechercher la liaison la plus proche.
+
+            Args:
+                node: Nœud de l'arbre analysé.
+
+            Returns:
+                Fonctions, classes et lambdas, de l'intérieur vers le module final.
+                Cette approximation ne reproduit pas toutes les règles lexicales Python.
+            """
             result = []
             while node in parents:
                 node = parents[node]
@@ -344,11 +445,24 @@ class PythonBoto3Detector(Detector):
                     result.append(node)
             return [*result, tree]
 
+        # La portée fait partie de la clé pour ne pas confondre deux clients homonymes.
         clients: dict[tuple[ast.AST, str], str | None] = {}
+        # Ces liaisons bloquent un candidat masqué par une valeur non reconnue.
         foreign_names: set[tuple[ast.AST, str]] = set()
+        # Les noms de sessions et d'imports restent globaux à cette analyse approximative.
         sessions: set[str] = set()
 
         def factory(call: ast.AST) -> tuple[bool, str | None]:
+            """Reconnaît une fabrique importée ou chaînée sans appeler boto3/botocore.
+
+            Args:
+                call: Nœud candidat, y compris une fabrique sur une session inline.
+
+            Returns:
+                Couple (reconnu, service) ; __session__ marque une session,
+                None un service dynamique ou un appel non reconnu selon le booléen.
+                Seul le nom de service littéral, positionnel ou service_name, est lu.
+            """
             if not isinstance(call, ast.Call):
                 return False, None
             function = call.func
@@ -429,6 +543,7 @@ class PythonBoto3Detector(Detector):
                 continue
             service = clients.get(binding, direct_service if recognized else None)
             expected_service, tf_type = _RESOURCES[method]
+            # La même méthode existe dans ECS et EKS : le client tranche, pas son nom.
             if method == "create_cluster" and service == "eks":
                 tf_type = "aws_eks_cluster"
             elif service is not None and service != expected_service:
@@ -438,6 +553,17 @@ class PythonBoto3Detector(Detector):
                 notes.append("TODO : vérifier que cet appel utilise un client boto3.")
 
             def value(node: ast.AST, label: str = "literal") -> Any:
+                """Conserve les littéraux sûrs et remplace les expressions par des variables.
+
+                Args:
+                    node: Expression d'argument, jamais exécutée par literal_eval.
+                    label: Contexte transmis à la neutralisation des clés réservées.
+
+                Returns:
+                    Valeur normalisée ; les listes/tuples et dicts à clés textuelles
+                    constantes restent partiellement convertibles malgré leurs éléments
+                    dynamiques. Les autres expressions donnent un _Raw var.* avec TODO.
+                """
                 try:
                     return _literal(ast.literal_eval(node), notes, label)
                 except (ValueError, TypeError):
@@ -492,6 +618,7 @@ class PythonBoto3Detector(Detector):
                 elif source in ("Tags", "tags"):
                     attributes["tags"] = _tags(item, notes)
                 elif source == "TagSpecifications" and isinstance(item, list):
+                    # Ne pas appliquer aux instances les tags de volumes créés en parallèle.
                     resource_kind = {
                         "run_instances": "instance",
                         "create_security_group": "security-group",
@@ -535,6 +662,7 @@ class PythonBoto3Detector(Detector):
                     else:
                         notes.append("TODO : Code Lambda non converti.")
                 elif source in ("MinCount", "MaxCount") and item == 1:
+                    # Un Finding représente une ressource ; les autres cardinalités exigent TODO.
                     continue
                 else:
                     notes.append(f"TODO : propriété boto3 non prise en charge : {source}.")

@@ -1,4 +1,11 @@
-"""Validation syntaxique et sémantique des fichiers Terraform générés."""
+"""Vérifier les fichiers générés par fournisseur avec Terraform si disponible.
+
+Entrées : fixtures analysées statiquement ; sorties : assertions sur le
+formatage et les diagnostics, avec une liste limitée de TODO acceptables.
+Sécurité : les subprocess contrôlés exécutent fmt, init sans backend et validate,
+jamais les sources, imports, plan ou apply ; init peut télécharger les fournisseurs
+depuis leur registre, sans accès aux ressources cloud à analyser.
+"""
 
 from __future__ import annotations
 

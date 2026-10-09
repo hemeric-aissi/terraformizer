@@ -1,4 +1,9 @@
-"""Tests de non-régression des fichiers générés."""
+"""Comparer les fichiers proposés aux snapshots enregistrés.
+
+Entrées : sources locales analysées statiquement et snapshots attendus.
+Sorties : assertions d'égalité, ou réécriture sur option explicite uniquement.
+Sécurité : aucun accès cloud ni exécution des sources ou scripts générés.
+"""
 
 from __future__ import annotations
 
