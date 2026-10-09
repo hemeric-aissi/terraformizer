@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terraformizer"
+version = "0.1.0"
+description = "Convertit les créations d'infrastructure hors Terraform en HCL"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["pyyaml>=6.0.3", "rich>=14.2.0"]
+
+[project.optional-dependencies]
+dev = ["hypothesis>=6.100", "pytest>=8.4.2", "ruff>=0.14.0"]
+
+[project.scripts]
+terraformizer = "terraformizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["terraformizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
