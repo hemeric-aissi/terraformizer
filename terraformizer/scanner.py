@@ -12,8 +12,17 @@ from terraformizer.detectors.base import slugify
 from terraformizer.models import Finding
 
 DEFAULT_IGNORES: tuple[str, ...] = (
-    ".git", ".terraform", "node_modules", "venv", ".venv", "__pycache__",
-    "dist", "build", ".tox", ".mypy_cache", "*.tfstate*",
+    ".git",
+    ".terraform",
+    "node_modules",
+    "venv",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    "*.tfstate*",
 )
 MAX_FILE_SIZE = 2 * 1024 * 1024
 
@@ -35,8 +44,7 @@ def scan(
     def ignored(path: Path) -> bool:
         relative = path.relative_to(base)
         return any(
-            fnmatch.fnmatch(part, pattern)
-            or fnmatch.fnmatch(relative.as_posix(), pattern)
+            fnmatch.fnmatch(part, pattern) or fnmatch.fnmatch(relative.as_posix(), pattern)
             for pattern in patterns
             for part in relative.parts
         )
@@ -61,17 +69,19 @@ def scan(
                     finding.source_file = relative
                 findings.extend(detected)
             except Exception as exc:
-                findings.append(Finding(
-                    provider="unknown",
-                    tf_type="ERROR",
-                    name=slugify(f"{detector.name}_{relative}"),
-                    attributes={},
-                    source_file=relative,
-                    line=1,
-                    original="",
-                    confidence=0.0,
-                    notes=[f"Erreur du détecteur {detector.name} : {exc}"],
-                ))
+                findings.append(
+                    Finding(
+                        provider="unknown",
+                        tf_type="ERROR",
+                        name=slugify(f"{detector.name}_{relative}"),
+                        attributes={},
+                        source_file=relative,
+                        line=1,
+                        original="",
+                        confidence=0.0,
+                        notes=[f"Erreur du détecteur {detector.name} : {exc}"],
+                    )
+                )
 
     if root.is_file():
         inspect(root)
@@ -79,7 +89,8 @@ def scan(
         for directory, dirs, files in os.walk(root, followlinks=False):
             parent = Path(directory)
             dirs[:] = sorted(
-                name for name in dirs
+                name
+                for name in dirs
                 if not (parent / name).is_symlink() and not ignored(parent / name)
             )
             for name in sorted(files):

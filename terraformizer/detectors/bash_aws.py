@@ -20,110 +20,193 @@ from terraformizer.detectors._bash import (
 from terraformizer.models import Finding
 
 # Type, nom CLI, champs CLI → Terraform, attributs requis, import par nom.
-AWS_COMMANDS: dict[
-    tuple[str, str], tuple[str, str, dict[str, str], tuple[str, ...], bool]
-] = {
+AWS_COMMANDS: dict[tuple[str, str], tuple[str, str, dict[str, str], tuple[str, ...], bool]] = {
     ("ec2", "run-instances"): (
-        "aws_instance", "tag-specifications",
-        {"image-id": "ami", "instance-type": "instance_type", "key-name": "key_name",
-         "subnet-id": "subnet_id", "security-group-ids": "vpc_security_group_ids",
-         "iam-instance-profile": "iam_instance_profile", "user-data": "user_data"},
-        ("ami", "instance_type"), False,
+        "aws_instance",
+        "tag-specifications",
+        {
+            "image-id": "ami",
+            "instance-type": "instance_type",
+            "key-name": "key_name",
+            "subnet-id": "subnet_id",
+            "security-group-ids": "vpc_security_group_ids",
+            "iam-instance-profile": "iam_instance_profile",
+            "user-data": "user_data",
+        },
+        ("ami", "instance_type"),
+        False,
     ),
     ("s3", "mb"): ("aws_s3_bucket", "bucket", {}, ("bucket",), True),
     ("s3api", "create-bucket"): (
-        "aws_s3_bucket", "bucket", {"bucket": "bucket"}, ("bucket",), True,
+        "aws_s3_bucket",
+        "bucket",
+        {"bucket": "bucket"},
+        ("bucket",),
+        True,
     ),
     ("ec2", "create-security-group"): (
-        "aws_security_group", "group-name",
+        "aws_security_group",
+        "group-name",
         {"group-name": "name", "description": "description", "vpc-id": "vpc_id"},
-        ("name", "description"), False,
+        ("name", "description"),
+        False,
     ),
     ("ec2", "create-vpc"): (
-        "aws_vpc", "cidr-block", {"cidr-block": "cidr_block",
-                                 "instance-tenancy": "instance_tenancy"},
-        ("cidr_block",), False,
+        "aws_vpc",
+        "cidr-block",
+        {"cidr-block": "cidr_block", "instance-tenancy": "instance_tenancy"},
+        ("cidr_block",),
+        False,
     ),
     ("ec2", "create-subnet"): (
-        "aws_subnet", "cidr-block",
-        {"cidr-block": "cidr_block", "vpc-id": "vpc_id",
-         "availability-zone": "availability_zone", "ipv6-cidr-block": "ipv6_cidr_block"},
-        ("cidr_block", "vpc_id"), False,
+        "aws_subnet",
+        "cidr-block",
+        {
+            "cidr-block": "cidr_block",
+            "vpc-id": "vpc_id",
+            "availability-zone": "availability_zone",
+            "ipv6-cidr-block": "ipv6_cidr_block",
+        },
+        ("cidr_block", "vpc_id"),
+        False,
     ),
     ("iam", "create-role"): (
-        "aws_iam_role", "role-name",
-        {"role-name": "name", "assume-role-policy-document": "assume_role_policy",
-         "description": "description", "path": "path",
-         "max-session-duration": "max_session_duration"},
-        ("name", "assume_role_policy"), True,
+        "aws_iam_role",
+        "role-name",
+        {
+            "role-name": "name",
+            "assume-role-policy-document": "assume_role_policy",
+            "description": "description",
+            "path": "path",
+            "max-session-duration": "max_session_duration",
+        },
+        ("name", "assume_role_policy"),
+        True,
     ),
     ("iam", "create-user"): (
-        "aws_iam_user", "user-name", {"user-name": "name", "path": "path"},
-        ("name",), True,
+        "aws_iam_user",
+        "user-name",
+        {"user-name": "name", "path": "path"},
+        ("name",),
+        True,
     ),
     ("iam", "create-policy"): (
-        "aws_iam_policy", "policy-name",
-        {"policy-name": "name", "policy-document": "policy",
-         "description": "description", "path": "path"},
-        ("name", "policy"), False,
+        "aws_iam_policy",
+        "policy-name",
+        {
+            "policy-name": "name",
+            "policy-document": "policy",
+            "description": "description",
+            "path": "path",
+        },
+        ("name", "policy"),
+        False,
     ),
     ("rds", "create-db-instance"): (
-        "aws_db_instance", "db-instance-identifier",
-        {"db-instance-identifier": "identifier", "db-instance-class": "instance_class",
-         "engine": "engine", "engine-version": "engine_version",
-         "master-username": "username", "master-user-password": "password",
-         "manage-master-user-password": "manage_master_user_password",
-         "allocated-storage": "allocated_storage", "db-name": "db_name",
-         "db-subnet-group-name": "db_subnet_group_name",
-         "vpc-security-group-ids": "vpc_security_group_ids",
-         "publicly-accessible": "publicly_accessible", "multi-az": "multi_az",
-         "storage-type": "storage_type", "storage-encrypted": "storage_encrypted"},
-        ("identifier", "instance_class", "engine", "allocated_storage", "username"), True,
+        "aws_db_instance",
+        "db-instance-identifier",
+        {
+            "db-instance-identifier": "identifier",
+            "db-instance-class": "instance_class",
+            "engine": "engine",
+            "engine-version": "engine_version",
+            "master-username": "username",
+            "master-user-password": "password",
+            "manage-master-user-password": "manage_master_user_password",
+            "allocated-storage": "allocated_storage",
+            "db-name": "db_name",
+            "db-subnet-group-name": "db_subnet_group_name",
+            "vpc-security-group-ids": "vpc_security_group_ids",
+            "publicly-accessible": "publicly_accessible",
+            "multi-az": "multi_az",
+            "storage-type": "storage_type",
+            "storage-encrypted": "storage_encrypted",
+        },
+        ("identifier", "instance_class", "engine", "allocated_storage", "username"),
+        True,
     ),
     ("lambda", "create-function"): (
-        "aws_lambda_function", "function-name",
-        {"function-name": "function_name", "runtime": "runtime", "role": "role",
-         "handler": "handler", "description": "description", "timeout": "timeout",
-         "memory-size": "memory_size", "zip-file": "filename",
-         "package-type": "package_type"},
-        ("function_name", "role"), True,
+        "aws_lambda_function",
+        "function-name",
+        {
+            "function-name": "function_name",
+            "runtime": "runtime",
+            "role": "role",
+            "handler": "handler",
+            "description": "description",
+            "timeout": "timeout",
+            "memory-size": "memory_size",
+            "zip-file": "filename",
+            "package-type": "package_type",
+        },
+        ("function_name", "role"),
+        True,
     ),
     ("dynamodb", "create-table"): (
-        "aws_dynamodb_table", "table-name",
+        "aws_dynamodb_table",
+        "table-name",
         {"table-name": "name", "billing-mode": "billing_mode"},
-        ("name", "hash_key", "attribute"), True,
+        ("name", "hash_key", "attribute"),
+        True,
     ),
     ("sqs", "create-queue"): (
-        "aws_sqs_queue", "queue-name", {"queue-name": "name"}, ("name",), False,
+        "aws_sqs_queue",
+        "queue-name",
+        {"queue-name": "name"},
+        ("name",),
+        False,
     ),
     ("sns", "create-topic"): (
-        "aws_sns_topic", "name", {"name": "name"}, ("name",), False,
+        "aws_sns_topic",
+        "name",
+        {"name": "name"},
+        ("name",),
+        False,
     ),
     ("ecr", "create-repository"): (
-        "aws_ecr_repository", "repository-name",
+        "aws_ecr_repository",
+        "repository-name",
         {"repository-name": "name", "image-tag-mutability": "image_tag_mutability"},
-        ("name",), True,
+        ("name",),
+        True,
     ),
     ("ecs", "create-cluster"): (
-        "aws_ecs_cluster", "cluster-name", {"cluster-name": "name"}, ("name",), True,
+        "aws_ecs_cluster",
+        "cluster-name",
+        {"cluster-name": "name"},
+        ("name",),
+        True,
     ),
     ("eks", "create-cluster"): (
-        "aws_eks_cluster", "name",
+        "aws_eks_cluster",
+        "name",
         {"name": "name", "role-arn": "role_arn", "kubernetes-version": "version"},
-        ("name", "role_arn", "vpc_config"), True,
+        ("name", "role_arn", "vpc_config"),
+        True,
     ),
     ("kms", "create-key"): (
-        "aws_kms_key", "description",
-        {"description": "description", "key-usage": "key_usage",
-         "key-spec": "customer_master_key_spec", "multi-region": "multi_region",
-         "policy": "policy"},
-        (), False,
+        "aws_kms_key",
+        "description",
+        {
+            "description": "description",
+            "key-usage": "key_usage",
+            "key-spec": "customer_master_key_spec",
+            "multi-region": "multi_region",
+            "policy": "policy",
+        },
+        (),
+        False,
     ),
     ("logs", "create-log-group"): (
-        "aws_cloudwatch_log_group", "log-group-name",
-        {"log-group-name": "name", "kms-key-id": "kms_key_id",
-         "retention-in-days": "retention_in_days"},
-        ("name",), True,
+        "aws_cloudwatch_log_group",
+        "log-group-name",
+        {
+            "log-group-name": "name",
+            "kms-key-id": "kms_key_id",
+            "retention-in-days": "retention_in_days",
+        },
+        ("name",),
+        True,
     ),
 }
 
@@ -164,7 +247,10 @@ class BashAWSDetector(BashDetector):
             # Les options globales sont également autorisées avant le service.
             words = command.words[1:]
             while words and words[0].split("=")[0] in (
-                "--profile", "--region", "--output", "--no-cli-pager"
+                "--profile",
+                "--region",
+                "--output",
+                "--no-cli-pager",
             ):
                 words = words[1:] if "=" in words[0] or words[0] == "--no-cli-pager" else words[2:]
             if len(words) < 2:
@@ -174,9 +260,11 @@ class BashAWSDetector(BashDetector):
                 continue
             values, positional = flags(words[2:])
             tf_type, name_flag, mapping, required, import_by_name = spec
-            attrs = {target: typed_value(target, values[source])
-                     for source, target in mapping.items()
-                     if source in values}
+            attrs = {
+                target: typed_value(target, values[source])
+                for source, target in mapping.items()
+                if source in values
+            }
             known = set(mapping)
             notes: list[str] = []
             for field in ("vpc_security_group_ids",):
@@ -213,9 +301,12 @@ class BashAWSDetector(BashDetector):
                 if "code" in values:
                     known.add("code")
                     config = _object(values["code"])
-                    for source, target in (("S3Bucket", "s3_bucket"), ("S3Key", "s3_key"),
-                                           ("S3ObjectVersion", "s3_object_version"),
-                                           ("ImageUri", "image_uri")):
+                    for source, target in (
+                        ("S3Bucket", "s3_bucket"),
+                        ("S3Key", "s3_key"),
+                        ("S3ObjectVersion", "s3_object_version"),
+                        ("ImageUri", "image_uri"),
+                    ):
                         if source in config:
                             attrs[target] = config[source]
                 if attrs.get("package_type") != "Image":
@@ -234,12 +325,16 @@ class BashAWSDetector(BashDetector):
                 known.add("resources-vpc-config")
                 config = _object(values["resources-vpc-config"])
                 block: dict[str, Any] = {}
-                for source, target in (("subnetIds", "subnet_ids"),
-                                       ("securityGroupIds", "security_group_ids")):
+                for source, target in (
+                    ("subnetIds", "subnet_ids"),
+                    ("securityGroupIds", "security_group_ids"),
+                ):
                     if source in config:
                         block[target] = items(config[source])
-                for source, target in (("endpointPublicAccess", "endpoint_public_access"),
-                                       ("endpointPrivateAccess", "endpoint_private_access")):
+                for source, target in (
+                    ("endpointPublicAccess", "endpoint_public_access"),
+                    ("endpointPrivateAccess", "endpoint_private_access"),
+                ):
                     if source in config:
                         block[target] = scalar(config[source])
                 attrs["vpc_config"] = [block]
@@ -255,18 +350,26 @@ class BashAWSDetector(BashDetector):
                 known.add("attributes")
                 config = _object(values["attributes"])
                 attribute_mapping = (
-                    {"DelaySeconds": "delay_seconds", "MaximumMessageSize": "max_message_size",
-                     "MessageRetentionPeriod": "message_retention_seconds",
-                     "ReceiveMessageWaitTimeSeconds": "receive_wait_time_seconds",
-                     "VisibilityTimeout": "visibility_timeout_seconds",
-                     "FifoQueue": "fifo_queue",
-                     "ContentBasedDeduplication": "content_based_deduplication",
-                     "KmsMasterKeyId": "kms_master_key_id", "Policy": "policy",
-                     "RedrivePolicy": "redrive_policy"}
-                    if tf_type == "aws_sqs_queue" else
-                    {"DisplayName": "display_name", "FifoTopic": "fifo_topic",
-                     "ContentBasedDeduplication": "content_based_deduplication",
-                     "KmsMasterKeyId": "kms_master_key_id", "Policy": "policy"}
+                    {
+                        "DelaySeconds": "delay_seconds",
+                        "MaximumMessageSize": "max_message_size",
+                        "MessageRetentionPeriod": "message_retention_seconds",
+                        "ReceiveMessageWaitTimeSeconds": "receive_wait_time_seconds",
+                        "VisibilityTimeout": "visibility_timeout_seconds",
+                        "FifoQueue": "fifo_queue",
+                        "ContentBasedDeduplication": "content_based_deduplication",
+                        "KmsMasterKeyId": "kms_master_key_id",
+                        "Policy": "policy",
+                        "RedrivePolicy": "redrive_policy",
+                    }
+                    if tf_type == "aws_sqs_queue"
+                    else {
+                        "DisplayName": "display_name",
+                        "FifoTopic": "fifo_topic",
+                        "ContentBasedDeduplication": "content_based_deduplication",
+                        "KmsMasterKeyId": "kms_master_key_id",
+                        "Policy": "policy",
+                    }
                 )
                 for source, value in config.items():
                     if source in attribute_mapping:
@@ -277,12 +380,22 @@ class BashAWSDetector(BashDetector):
                         notes.append(f"Flag non mappé : --attributes.{source}")
             name = values.get(name_flag) or attrs.get("bucket") or tf_type
             import_id = str(name) if import_by_name and values.get(name_flag) else None
-            results.append(finding(
-                path=path, command=command, provider="aws", tf_type=tf_type, name=name,
-                attributes=attrs, values=values, known=known,
-                ignored={"profile", "region", "output", "no-cli-pager"},
-                required=required, import_id=import_id, notes=notes,
-            ))
+            results.append(
+                finding(
+                    path=path,
+                    command=command,
+                    provider="aws",
+                    tf_type=tf_type,
+                    name=name,
+                    attributes=attrs,
+                    values=values,
+                    known=known,
+                    ignored={"profile", "region", "output", "no-cli-pager"},
+                    required=required,
+                    import_id=import_id,
+                    notes=notes,
+                )
+            )
         return results
 
     @staticmethod
@@ -300,12 +413,14 @@ class BashAWSDetector(BashDetector):
         if "key-schema" in values:
             for entry in _entries(values["key-schema"]):
                 if entry.get("KeyType") in ("HASH", "RANGE") and "AttributeName" in entry:
-                    attrs["hash_key" if entry["KeyType"] == "HASH" else "range_key"] = (
-                        entry["AttributeName"]
-                    )
+                    attrs["hash_key" if entry["KeyType"] == "HASH" else "range_key"] = entry[
+                        "AttributeName"
+                    ]
         if "provisioned-throughput" in values:
             throughput = shorthand(values["provisioned-throughput"])
-            for source, target in (("ReadCapacityUnits", "read_capacity"),
-                                   ("WriteCapacityUnits", "write_capacity")):
+            for source, target in (
+                ("ReadCapacityUnits", "read_capacity"),
+                ("WriteCapacityUnits", "write_capacity"),
+            ):
                 if source in throughput:
                     attrs[target] = typed_value(target, throughput[source])

@@ -19,8 +19,12 @@ from terraformizer.models import Finding
 GCLOUD_COMMANDS: dict[tuple[str, ...], tuple[str, dict[str, str], tuple[str, ...]]] = {
     ("compute", "instances", "create"): (
         "google_compute_instance",
-        {"machine-type": "machine_type", "zone": "zone",
-         "description": "description", "can-ip-forward": "can_ip_forward"},
+        {
+            "machine-type": "machine_type",
+            "zone": "zone",
+            "description": "description",
+            "can-ip-forward": "can_ip_forward",
+        },
         ("name", "machine_type", "zone", "boot_disk", "network_interface"),
     ),
     ("compute", "networks", "create"): (
@@ -30,23 +34,38 @@ GCLOUD_COMMANDS: dict[tuple[str, ...], tuple[str, dict[str, str], tuple[str, ...
     ),
     ("compute", "firewall-rules", "create"): (
         "google_compute_firewall",
-        {"network": "network", "description": "description", "direction": "direction",
-         "priority": "priority", "source-ranges": "source_ranges",
-         "destination-ranges": "destination_ranges", "source-tags": "source_tags",
-         "target-tags": "target_tags", "disabled": "disabled"},
+        {
+            "network": "network",
+            "description": "description",
+            "direction": "direction",
+            "priority": "priority",
+            "source-ranges": "source_ranges",
+            "destination-ranges": "destination_ranges",
+            "source-tags": "source_tags",
+            "target-tags": "target_tags",
+            "disabled": "disabled",
+        },
         ("name", "network"),
     ),
     ("storage", "buckets", "create"): (
         "google_storage_bucket",
-        {"location": "location", "default-storage-class": "storage_class",
-         "uniform-bucket-level-access": "uniform_bucket_level_access",
-         "public-access-prevention": "public_access_prevention"},
+        {
+            "location": "location",
+            "default-storage-class": "storage_class",
+            "uniform-bucket-level-access": "uniform_bucket_level_access",
+            "public-access-prevention": "public_access_prevention",
+        },
         ("name", "location"),
     ),
     ("container", "clusters", "create"): (
         "google_container_cluster",
-        {"zone": "location", "region": "location", "num-nodes": "initial_node_count",
-         "network": "network", "subnetwork": "subnetwork"},
+        {
+            "zone": "location",
+            "region": "location",
+            "num-nodes": "initial_node_count",
+            "network": "network",
+            "subnetwork": "subnetwork",
+        },
         ("name", "location"),
     ),
     ("sql", "instances", "create"): (
@@ -55,7 +74,9 @@ GCLOUD_COMMANDS: dict[tuple[str, ...], tuple[str, dict[str, str], tuple[str, ...
         ("name", "database_version", "settings"),
     ),
     ("pubsub", "topics", "create"): (
-        "google_pubsub_topic", {}, ("name",),
+        "google_pubsub_topic",
+        {},
+        ("name",),
     ),
     ("iam", "service-accounts", "create"): (
         "google_service_account",
@@ -106,16 +127,31 @@ class BashGcloudDetector(BashDetector):
                 attrs["account_id" if tf_type == "google_service_account" else "name"] = (
                     name.removeprefix("gs://").rstrip("/")
                 )
-            attrs.update({target: typed_value(target, values[source])
-                          for source, target in mapping.items()
-                          if source in values})
+            attrs.update(
+                {
+                    target: typed_value(target, values[source])
+                    for source, target in mapping.items()
+                    if source in values
+                }
+            )
             known = set(mapping)
             notes: list[str] = []
             if len(positional) > 1:
                 notes.append("Plusieurs noms fournis : seule la première ressource est proposée.")
             if tf_type == "google_compute_instance":
-                known.update({"image", "image-family", "image-project", "boot-disk-size",
-                              "boot-disk-type", "network", "subnet", "no-address", "tags"})
+                known.update(
+                    {
+                        "image",
+                        "image-family",
+                        "image-project",
+                        "boot-disk-size",
+                        "boot-disk-type",
+                        "network",
+                        "subnet",
+                        "no-address",
+                        "tags",
+                    }
+                )
                 disk: dict[str, Any] = {}
                 project = values.get("image-project")
                 if "image" in values:
@@ -165,8 +201,10 @@ class BashGcloudDetector(BashDetector):
                 if "machine-type" in values or "disk-size" in values:
                     node_config = {
                         target: typed_value(target, values[source])
-                        for source, target in (("machine-type", "machine_type"),
-                                               ("disk-size", "disk_size_gb"))
+                        for source, target in (
+                            ("machine-type", "machine_type"),
+                            ("disk-size", "disk_size_gb"),
+                        )
                         if source in values
                     }
                     attrs["node_config"] = node_config
@@ -176,13 +214,24 @@ class BashGcloudDetector(BashDetector):
                 known.add("tier")
                 if "tier" in values:
                     attrs["settings"] = {"tier": values["tier"]}
-            results.append(finding(
-                path=path, command=command, provider="google", tf_type=tf_type, name=name,
-                attributes=attrs, values=values, known=known,
-                ignored={"project", "quiet", "format"},
-                required=required,
-                import_id=(str(attrs["name"]) if tf_type == "google_storage_bucket"
-                           and attrs.get("name") else None),
-                notes=notes,
-            ))
+            results.append(
+                finding(
+                    path=path,
+                    command=command,
+                    provider="google",
+                    tf_type=tf_type,
+                    name=name,
+                    attributes=attrs,
+                    values=values,
+                    known=known,
+                    ignored={"project", "quiet", "format"},
+                    required=required,
+                    import_id=(
+                        str(attrs["name"])
+                        if tf_type == "google_storage_bucket" and attrs.get("name")
+                        else None
+                    ),
+                    notes=notes,
+                )
+            )
         return results

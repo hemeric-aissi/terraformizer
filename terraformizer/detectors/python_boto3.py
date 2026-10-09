@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import math
 import re
 from collections.abc import Iterable
@@ -173,8 +174,6 @@ def _literal(value: Any, notes: list[str] | None = None, label: str = "literal")
 
 def _hcl(value: Any) -> str:
     """Sérialise une expression sans commentaires incorporés."""
-    import json
-
     if isinstance(value, _Raw) and set(value) == {"__raw__"}:
         return value["__raw__"]
     if isinstance(value, dict):

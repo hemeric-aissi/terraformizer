@@ -19,8 +19,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def test_cli_outputs(tmp_path: Path) -> None:
     out = tmp_path / "generated"
     assert main([str(FIXTURES), "-o", str(out)]) == 0
-    assert {"aws.tf", "google.tf", "azurerm.tf", "versions.tf", "variables.tf",
-            "import.sh", "report.json", "REPORT.md"} <= {p.name for p in out.iterdir()}
+    assert {
+        "aws.tf",
+        "google.tf",
+        "azurerm.tf",
+        "versions.tf",
+        "variables.tf",
+        "import.sh",
+        "report.json",
+        "REPORT.md",
+    } <= {p.name for p in out.iterdir()}
     assert (out / "import.sh").stat().st_mode & 0o777 == 0o755
     report = json.loads((out / "report.json").read_text())
     assert report
@@ -42,15 +50,28 @@ def test_cli_filter_report_and_fmt(tmp_path: Path) -> None:
     out = tmp_path / "out"
     with patch("terraformizer.cli.shutil.which", return_value="/bin/terraform"):
         with patch("terraformizer.cli.subprocess.run") as run:
-            assert main([str(FIXTURES), "-o", str(out), "--only", "bash_aws",
-                         "--report", "json", "--fmt"]) == 0
+            assert (
+                main(
+                    [
+                        str(FIXTURES),
+                        "-o",
+                        str(out),
+                        "--only",
+                        "bash_aws",
+                        "--report",
+                        "json",
+                        "--fmt",
+                    ]
+                )
+                == 0
+            )
             run.assert_called_once_with(
-                ["/bin/terraform", "fmt", "-recursive", str(out)], check=True,
+                ["/bin/terraform", "fmt", "-recursive", str(out)],
+                check=True,
             )
     assert not (out / "REPORT.md").exists()
     assert not (out / "google.tf").exists()
-    assert main([str(FIXTURES), "-o", str(out), "--dry-run",
-                 "--min-confidence", "1"]) == 0
+    assert main([str(FIXTURES), "-o", str(out), "--dry-run", "--min-confidence", "1"]) == 0
     with pytest.raises(SystemExit):
         main([str(FIXTURES), "--min-confidence", "nan"])
 
@@ -127,5 +148,11 @@ def test_fmt_missing_and_markdown_report(tmp_path: Path, capsys: pytest.CaptureF
 def test_fail_on_findings_applies_before_confidence_filter(tmp_path: Path) -> None:
     source = tmp_path / "template.yaml"
     source.write_text("Resources:\n  Unknown:\n    Type: AWS::Unknown::Resource\n")
-    assert main([str(source), "--dry-run", "--min-confidence", "1",
-                 "--fail-on-findings"]) == 2
+    assert main([str(source), "--dry-run", "--min-confidence", "1", "--fail-on-findings"]) == 2
+
+
+def test_fail_on_filtered_applies_after_confidence_filter(tmp_path: Path) -> None:
+    source = tmp_path / "template.yaml"
+    source.write_text("Resources:\n  Unknown:\n    Type: AWS::Unknown::Resource\n")
+    assert main([str(source), "--dry-run", "--min-confidence", "1", "--fail-on-filtered"]) == 0
+    assert main([str(source), "--dry-run", "--fail-on-filtered"]) == 2

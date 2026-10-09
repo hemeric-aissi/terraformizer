@@ -12,7 +12,5 @@ ec2.run_instances(
     InstanceType="t3.micro",
     MinCount=1,
     MaxCount=1,
-    TagSpecifications=[
-        {"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": "web-01"}]}
-    ],
+    TagSpecifications=[{"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": "web-01"}]}],
 )

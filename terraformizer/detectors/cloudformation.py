@@ -13,6 +13,23 @@ from terraformizer.detectors.base import Detector, slugify
 from terraformizer.detectors.python_boto3 import _dynamodb, _hcl, _literal, _Raw, _snake, _tags
 from terraformizer.models import Finding
 
+_GETATT_FIELDS: dict[str, str] = {
+    "Arn": "arn",
+    "PublicIp": "public_ip",
+    "PrivateIp": "private_ip",
+    "PublicDnsName": "public_dns",
+    "PrivateDnsName": "private_dns",
+    "DNSName": "bucket_domain_name",
+    "DomainName": "bucket_domain_name",
+    "RegionalDomainName": "bucket_regional_domain_name",
+    "Endpoint.Address": "address",
+    "Endpoint.Port": "port",
+    "QueueName": "name",
+    "Name": "name",
+    "GroupId": "id",
+    "VpcId": "id",
+}
+
 _TYPES = {
     "AWS::EC2::Instance": "aws_instance",
     "AWS::S3::Bucket": "aws_s3_bucket",
@@ -189,43 +206,13 @@ class CloudFormationDetector(Detector):
                     return _Raw(f"var.{slugify(target.replace('::', '_'))}")
                 mapped_type = logical_types.get(target)
                 if mapped_type:
-                    field = {
-                        "Arn": "arn",
-                        "PublicIp": "public_ip",
-                        "PrivateIp": "private_ip",
-                        "PublicDnsName": "public_dns",
-                        "PrivateDnsName": "private_dns",
-                        "DNSName": "bucket_domain_name",
-                        "DomainName": "bucket_domain_name",
-                        "RegionalDomainName": "bucket_regional_domain_name",
-                        "Endpoint.Address": "address",
-                        "Endpoint.Port": "port",
-                        "QueueName": "name",
-                        "Name": "name",
-                        "GroupId": "id",
-                        "VpcId": "id",
-                    }.get(
+                    field = _GETATT_FIELDS.get(
                         attribute,
                         slugify(_snake(attribute.replace(".", "_"))) if attribute else "id",
                     )
                     if attribute is None and mapped_type == "aws_sns_topic":
                         field = "arn"
-                    if attribute and attribute not in (
-                        "Arn",
-                        "PublicIp",
-                        "PrivateIp",
-                        "PublicDnsName",
-                        "PrivateDnsName",
-                        "DNSName",
-                        "DomainName",
-                        "RegionalDomainName",
-                        "Endpoint.Address",
-                        "Endpoint.Port",
-                        "QueueName",
-                        "Name",
-                        "GroupId",
-                        "VpcId",
-                    ):
+                    if attribute and attribute not in _GETATT_FIELDS:
                         notes.append(f"TODO : vérifier l'attribut GetAtt {target}.{attribute}.")
                     notes.append(
                         f"TODO : vérifier l'approximation de la référence CloudFormation {target}."

@@ -12,7 +12,7 @@ license = "MIT"
 dependencies = ["pyyaml>=6.0.3", "rich>=14.2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.4.2", "ruff>=0.14.0"]
+dev = ["hypothesis>=6.100", "pytest>=8.4.2", "ruff>=0.14.0"]
 
 [project.scripts]
 terraformizer = "terraformizer.cli:main"

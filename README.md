@@ -15,15 +15,27 @@ python -m pip install -e .
 terraformizer --help
 ```
 
-Dépendances d'exécution : `pyyaml`, `rich`. Pour contribuer :
+Dépendances d'exécution : `pyyaml`, `rich`.
+
+## Tests
+
+Installer les dépendances de développement et lancer la suite :
 
 ```bash
 python -m pip install -e ".[dev]"
 pytest
+pytest --update-snapshots
 ruff check .
+ruff format --check .
 ```
 
-La CI exécute les tests et Ruff avec Python 3.10, 3.11 et 3.12.
+La suite comprend des snapshots déterministes, des propriétés Hypothesis et
+un test d'intégration Terraform. `pytest --update-snapshots` régénère les fichiers
+dans `tests/snapshots/` : relire chaque différence avant de les committer.
+Le test Terraform est ignoré lorsque `terraform` est absent du `PATH`; il exécute
+`terraform fmt -check -diff`, `terraform init` et `terraform validate` pour chaque
+fournisseur des fixtures. La CI l'exécute dans un job séparé avec Terraform 1.9.x.
+La CI exécute aussi les tests et Ruff avec Python 3.10, 3.11 et 3.12.
 
 ## Usage
 
@@ -43,11 +55,13 @@ terraformizer ./mon-projet -o ./terraformized --fmt
 | `--fmt` | Exécuter `terraform fmt -recursive` si Terraform est disponible |
 | `--dry-run` | Afficher les détections, sans écrire ni formater |
 | `--fail-on-findings` | Code 2 si l'analyse détecte des ressources, même filtrées |
+| `--fail-on-filtered` | Code 2 si des ressources restent après `--min-confidence` |
 | `--version` | Afficher la version |
 
 Codes de retour : **0** pour une analyse réussie, **1** pour un chemin invalide
 ou une erreur de lecture/écriture globale, **2** si `--fail-on-findings` trouve
-des ressources (ou pour des arguments CLI invalides).
+des ressources avant le filtre ou si `--fail-on-filtered` trouve des ressources
+après le filtre (ou pour des arguments CLI invalides).
 
 La sortie comprend `aws.tf`, `google.tf`, `azurerm.tf` selon les fournisseurs
 présents, `versions.tf`, `variables.tf`, `import.sh` exécutable et les rapports.

@@ -20,12 +20,18 @@ def print_summary(findings: list[Finding]) -> None:
         table.add_column(column)
     for finding in findings:
         color = (
-            "green" if finding.confidence >= 0.8
-            else "yellow" if finding.confidence >= 0.5 else "red"
+            "green"
+            if finding.confidence >= 0.8
+            else "yellow"
+            if finding.confidence >= 0.5
+            else "red"
         )
         table.add_row(
-            Text(finding.provider), Text(finding.tf_type), Text(finding.name),
-            Text(str(finding.source_file)), str(finding.line),
+            Text(finding.provider),
+            Text(finding.tf_type),
+            Text(finding.name),
+            Text(str(finding.source_file)),
+            str(finding.line),
             Text(f"{finding.confidence:.0%}", style=color),
             Text("; ".join(finding.notes)),
         )
@@ -51,14 +57,20 @@ def _cell(value: object) -> str:
 def write_markdown(findings: list[Finding], dest: Path) -> None:
     """Écrit un tableau Markdown des détections."""
     lines = [
-        "# Rapport terraformizer", "",
+        "# Rapport terraformizer",
+        "",
         "| Provider | Type | Nom | Fichier | Ligne | Confiance | Notes |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for finding in findings:
         cells = [
-            finding.provider, finding.tf_type, finding.name, finding.source_file,
-            finding.line, f"{finding.confidence:.0%}", "; ".join(finding.notes),
+            finding.provider,
+            finding.tf_type,
+            finding.name,
+            finding.source_file,
+            finding.line,
+            f"{finding.confidence:.0%}",
+            "; ".join(finding.notes),
         ]
         lines.append("| " + " | ".join(_cell(cell) for cell in cells) + " |")
     dest.write_text("\n".join(lines) + "\n", encoding="utf-8")

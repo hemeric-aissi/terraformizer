@@ -14,12 +14,10 @@ from terraformizer.models import Finding
 PROVIDERS = {
     "aws": 'provider "aws" {\n  region = var.aws_region\n}\n',
     "google": (
-        'provider "google" {\n  project = var.google_project\n'
-        '  region  = var.google_region\n}\n'
+        'provider "google" {\n  project = var.google_project\n  region  = var.google_region\n}\n'
     ),
     "azurerm": (
-        'provider "azurerm" {\n  features {}\n}\n\n'
-        'data "azurerm_client_config" "current" {}\n'
+        'provider "azurerm" {\n  features {}\n}\n\ndata "azurerm_client_config" "current" {}\n'
     ),
 }
 PROVIDER_VERSIONS = {"aws": "~> 5.0", "google": "~> 5.0", "azurerm": "~> 3.0"}
@@ -64,10 +62,7 @@ def _value(value: Any, indent: int = 0) -> str:
         escaped = value.replace("${", "$${").replace("%{", "%%{")
         if escaped.endswith("\n"):
             return f"<<-{delimiter}\n{escaped}{' ' * indent}{delimiter}"
-        return (
-            f"chomp(<<-{delimiter}\n{escaped}\n"
-            f"{' ' * indent}{delimiter}\n{' ' * indent})"
-        )
+        return f"chomp(<<-{delimiter}\n{escaped}\n{' ' * indent}{delimiter}\n{' ' * indent})"
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -92,10 +87,14 @@ def _value(value: Any, indent: int = 0) -> str:
 def _attributes(attributes: dict[str, Any], indent: int) -> list[str]:
     """Rend les attributs alignés et les blocs imbriqués."""
     simple = [
-        key for key, value in attributes.items()
-        if key == "tags" or not (
-            isinstance(value, dict) and "__raw__" not in value
-            or isinstance(value, list) and value
+        key
+        for key, value in attributes.items()
+        if key == "tags"
+        or not (
+            isinstance(value, dict)
+            and "__raw__" not in value
+            or isinstance(value, list)
+            and value
             and all(isinstance(item, dict) and "__raw__" not in item for item in value)
         )
     ]
@@ -104,6 +103,9 @@ def _attributes(attributes: dict[str, Any], indent: int) -> list[str]:
     prefix = " " * indent
     for key, value in attributes.items():
         if key in simple:
+            if key == "tags" and isinstance(value, dict) and "__raw__" not in value:
+                lines.append(f"{prefix}{key} = {_value(value, indent)}")
+                continue
             lines.append(f"{prefix}{key:<{width}} = {_value(value, indent)}")
             continue
         blocks = value if isinstance(value, list) else [value]
@@ -147,7 +149,8 @@ def _raw_variables(value: Any) -> set[str]:
 def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
     """Génère les providers, ressources, variables et imports nécessaires."""
     resources = deduplicate(
-        finding for finding in findings
+        finding
+        for finding in findings
         if finding.tf_type not in ("UNMAPPED", "ERROR") and finding.provider in PROVIDERS
     )
     providers = sorted({finding.provider for finding in resources})
@@ -155,31 +158,36 @@ def generate_files(findings: Iterable[Finding]) -> dict[str, str]:
     for provider in providers:
         rendered = [render_resource(f) for f in resources if f.provider == provider]
         files[f"{provider}.tf"] = PROVIDERS[provider] + "\n" + "\n".join(rendered)
-    versions = ['terraform {', '  required_version = ">= 1.5"']
+    versions = ["terraform {", '  required_version = ">= 1.5"']
     if providers:
         versions.append("  required_providers {")
         for provider in providers:
-            versions.extend([
-                f"    {provider} = {{",
-                f'      source  = "hashicorp/{provider}"',
-                f'      version = "{PROVIDER_VERSIONS[provider]}"',
-                "    }",
-            ])
+            versions.extend(
+                [
+                    f"    {provider} = {{",
+                    f'      source  = "hashicorp/{provider}"',
+                    f'      version = "{PROVIDER_VERSIONS[provider]}"',
+                    "    }",
+                ]
+            )
         versions.append("  }")
     versions.append("}")
     files["versions.tf"] = "\n".join(versions) + "\n"
     variables: dict[str, str] = {}
     if "aws" in providers:
-        variables["aws_region"] = '  type    = string\n  default = "us-east-1"'
+        variables["aws_region"] = (
+            '  type        = string\n  description = "Région AWS des ressources importées"'
+        )
     if "google" in providers:
         variables["google_project"] = "  type = string"
         variables["google_region"] = '  type    = string\n  default = "europe-west1"'
     for resource in resources:
         for name in sorted(_raw_variables(resource.attributes)):
             variables.setdefault(name, '  description = "TODO : valeur issue du code source"')
-    files["variables.tf"] = "\n\n".join(
-        f'variable "{name}" {{\n{body}\n}}' for name, body in sorted(variables.items())
-    ) + "\n"
+    files["variables.tf"] = (
+        "\n\n".join(f'variable "{name}" {{\n{body}\n}}' for name, body in sorted(variables.items()))
+        + "\n"
+    )
     imports = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     for resource in resources:
         # Le quoting protège les identifiants issus de sources non fiables.

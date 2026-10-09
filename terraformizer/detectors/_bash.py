@@ -61,7 +61,7 @@ def commands(content: str, executable: str) -> list[Command]:
             if not _valid_boundary(text, match.start(), match.group()):
                 continue
             position = match.end() - len(executable)
-            prefix = match.group()[:-len(executable)].rstrip()
+            prefix = match.group()[: -len(executable)].rstrip()
             wrapper = prefix[-1:] if prefix.endswith(("'", '"', "`")) else ""
             tail = _command_tail(text[position:], wrapper)
             line = next(number for offset, number in reversed(positions) if offset <= position)
@@ -140,11 +140,25 @@ def flags(
     values: dict[str, Any] = {}
     positional: list[str] = []
     boolean_flags = {
-        "quiet", "no-cli-pager", "only-show-errors", "no-address", "can-ip-forward",
-        "publicly-accessible", "multi-az", "storage-encrypted", "multi-region",
-        "generate-ssh-keys", "enable-managed-identity", "enable-rbac-authorization",
-        "enable-purge-protection", "enable-autopilot", "uniform-bucket-level-access",
-        "disabled", "https-only", "allow-blob-public-access", "manage-master-user-password",
+        "quiet",
+        "no-cli-pager",
+        "only-show-errors",
+        "no-address",
+        "can-ip-forward",
+        "publicly-accessible",
+        "multi-az",
+        "storage-encrypted",
+        "multi-region",
+        "generate-ssh-keys",
+        "enable-managed-identity",
+        "enable-rbac-authorization",
+        "enable-purge-protection",
+        "enable-autopilot",
+        "uniform-bucket-level-access",
+        "disabled",
+        "https-only",
+        "allow-blob-public-access",
+        "manage-master-user-password",
     }
     index = 0
     while index < len(words):
@@ -165,8 +179,12 @@ def flags(
             index += 1
             value = words[index]
             if key in (
-                "security-group-ids", "vpc-security-group-ids",
-                "attribute-definitions", "key-schema", "address-prefixes", "nics",
+                "security-group-ids",
+                "vpc-security-group-ids",
+                "attribute-definitions",
+                "key-schema",
+                "address-prefixes",
+                "nics",
                 "subnet-prefixes",
             ):
                 items = [value]
@@ -198,19 +216,44 @@ def scalar(value: Any) -> Any:
 def typed_value(attribute: str, value: Any) -> Any:
     """Convertit uniquement les attributs Terraform explicitement typés."""
     numeric = {
-        "max_session_duration", "allocated_storage", "timeout", "memory_size",
-        "retention_in_days", "read_capacity", "write_capacity", "delay_seconds",
-        "max_message_size", "message_retention_seconds", "receive_wait_time_seconds",
-        "visibility_timeout_seconds", "mtu", "priority", "initial_node_count",
-        "disk_size_gb", "node_count",
+        "max_session_duration",
+        "allocated_storage",
+        "timeout",
+        "memory_size",
+        "retention_in_days",
+        "read_capacity",
+        "write_capacity",
+        "delay_seconds",
+        "max_message_size",
+        "message_retention_seconds",
+        "receive_wait_time_seconds",
+        "visibility_timeout_seconds",
+        "mtu",
+        "priority",
+        "initial_node_count",
+        "disk_size_gb",
+        "node_count",
     }
     boolean = {
-        "publicly_accessible", "multi_az", "storage_encrypted", "multi_region",
-        "manage_master_user_password", "scan_on_push", "fifo_queue", "fifo_topic",
-        "content_based_deduplication", "endpoint_public_access", "endpoint_private_access",
-        "can_ip_forward", "uniform_bucket_level_access", "disabled", "enable_autopilot",
-        "https_traffic_only_enabled", "allow_nested_items_to_be_public",
-        "enable_rbac_authorization", "purge_protection_enabled",
+        "publicly_accessible",
+        "multi_az",
+        "storage_encrypted",
+        "multi_region",
+        "manage_master_user_password",
+        "scan_on_push",
+        "fifo_queue",
+        "fifo_topic",
+        "content_based_deduplication",
+        "endpoint_public_access",
+        "endpoint_private_access",
+        "can_ip_forward",
+        "uniform_bucket_level_access",
+        "disabled",
+        "enable_autopilot",
+        "https_traffic_only_enabled",
+        "allow_nested_items_to_be_public",
+        "enable_rbac_authorization",
+        "purge_protection_enabled",
     }
     if attribute in numeric and isinstance(value, str) and re.fullmatch(r"\d+", value):
         return int(value)
@@ -266,11 +309,7 @@ def finding(
     for key in required:
         if key not in attributes or attributes[key] in (None, "", []):
             warnings.append(f"Attribut requis absent : {key}")
-    if any(
-        re.search(r"\$|`", str(value))
-        for key, value in values.items()
-        if key not in ignored
-    ):
+    if any(re.search(r"\$|`", str(value)) for key, value in values.items() if key not in ignored):
         warnings.append("Valeur shell dynamique : résolution manuelle nécessaire.")
         import_id = None
     if import_id and re.search(r"\$|`", import_id):

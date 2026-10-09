@@ -11,6 +11,7 @@ from pathlib import Path
 from rich.console import Console
 
 from terraformizer import __version__
+from terraformizer.detectors import ALL_DETECTORS
 from terraformizer.generators.hcl import deduplicate, generate_files
 from terraformizer.report import print_summary, write_json, write_markdown
 from terraformizer.scanner import DEFAULT_IGNORES, scan
@@ -34,20 +35,43 @@ def main(argv: list[str] | None = None) -> int:
     parser._positionals.title = "Arguments"
     parser.add_argument("-h", "--help", action="help", help="Afficher cette aide puis quitter")
     parser.add_argument("path", type=Path, help="Projet ou fichier à analyser")
-    parser.add_argument("-o", "--out", type=Path, default=Path("terraformized"),
-                        help="Dossier de sortie (défaut : terraformized)")
-    parser.add_argument("--only", nargs="+", metavar="DÉTECTEUR",
-                        help="Détecteurs : bash_aws, bash_gcloud, bash_az, python_boto3, cloudformation")
-    parser.add_argument("--min-confidence", type=_confidence, default=0.0,
-                        help="Seuil de confiance entre 0 et 1")
-    parser.add_argument("--report", choices=("json", "md", "both"), default="both",
-                        help="Formats de rapport (défaut : both)")
+    parser.add_argument(
+        "-o",
+        "--out",
+        type=Path,
+        default=Path("terraformized"),
+        help="Dossier de sortie (défaut : terraformized)",
+    )
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        metavar="DÉTECTEUR",
+        help=f"Détecteurs : {', '.join(d.name for d in ALL_DETECTORS)}",
+    )
+    parser.add_argument(
+        "--min-confidence", type=_confidence, default=0.0, help="Seuil de confiance entre 0 et 1"
+    )
+    parser.add_argument(
+        "--report",
+        choices=("json", "md", "both"),
+        default="both",
+        help="Formats de rapport (défaut : both)",
+    )
     parser.add_argument("--fmt", action="store_true", help="Exécuter terraform fmt si disponible")
     parser.add_argument("--dry-run", action="store_true", help="Afficher sans écrire de fichiers")
-    parser.add_argument("--fail-on-findings", action="store_true",
-                        help="Retourner 2 si des ressources sont détectées")
-    parser.add_argument("--version", action="version", version=__version__,
-                        help="Afficher la version puis quitter")
+    parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help="Retourner 2 si des ressources sont détectées",
+    )
+    parser.add_argument(
+        "--fail-on-filtered",
+        action="store_true",
+        help="Retourner 2 si des ressources dépassent --min-confidence",
+    )
+    parser.add_argument(
+        "--version", action="version", version=__version__, help="Afficher la version puis quitter"
+    )
     args = parser.parse_args(argv)
     console = Console()
     root = args.path.resolve()
@@ -105,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         "  terraform init\n  bash import.sh\n  terraform plan\n"
         "Ne pas appliquer avant de vérifier que le plan ne recrée pas les ressources existantes."
     )
-    return 2 if args.fail_on_findings and detected else 0
+    return 2 if (args.fail_on_findings and detected) or (args.fail_on_filtered and findings) else 0
 
 
 if __name__ == "__main__":

@@ -19,38 +19,52 @@ from terraformizer.models import Finding
 
 AZ_COMMANDS: dict[tuple[str, ...], tuple[str, dict[str, str], tuple[str, ...]]] = {
     ("group", "create"): (
-        "azurerm_resource_group", {"name": "name", "location": "location"},
+        "azurerm_resource_group",
+        {"name": "name", "location": "location"},
         ("name", "location"),
     ),
     ("vm", "create"): (
         "azurerm_linux_virtual_machine",
-        {"name": "name", "size": "size", "admin-username": "admin_username",
-         "admin-password": "admin_password"},
+        {
+            "name": "name",
+            "size": "size",
+            "admin-username": "admin_username",
+            "admin-password": "admin_password",
+        },
         ("name", "resource_group_name", "location", "admin_username", "network_interface_ids"),
     ),
     ("storage", "account", "create"): (
         "azurerm_storage_account",
-        {"name": "name", "kind": "account_kind",
-         "https-only": "https_traffic_only_enabled",
-         "min-tls-version": "min_tls_version",
-         "allow-blob-public-access": "allow_nested_items_to_be_public"},
+        {
+            "name": "name",
+            "kind": "account_kind",
+            "https-only": "https_traffic_only_enabled",
+            "min-tls-version": "min_tls_version",
+            "allow-blob-public-access": "allow_nested_items_to_be_public",
+        },
         ("name", "resource_group_name", "location"),
     ),
     ("network", "vnet", "create"): (
         "azurerm_virtual_network",
-        {"name": "name", "address-prefixes": "address_space",
-         "address-prefix": "address_space"},
+        {"name": "name", "address-prefixes": "address_space", "address-prefix": "address_space"},
         ("name", "resource_group_name", "location", "address_space"),
     ),
     ("aks", "create"): (
-        "azurerm_kubernetes_cluster", {"name": "name", "dns-name-prefix": "dns_prefix",
-                                     "kubernetes-version": "kubernetes_version"},
+        "azurerm_kubernetes_cluster",
+        {
+            "name": "name",
+            "dns-name-prefix": "dns_prefix",
+            "kubernetes-version": "kubernetes_version",
+        },
         ("name", "resource_group_name", "location", "dns_prefix", "default_node_pool"),
     ),
     ("keyvault", "create"): (
         "azurerm_key_vault",
-        {"name": "name", "enable-rbac-authorization": "enable_rbac_authorization",
-         "enable-purge-protection": "purge_protection_enabled"},
+        {
+            "name": "name",
+            "enable-rbac-authorization": "enable_rbac_authorization",
+            "enable-purge-protection": "purge_protection_enabled",
+        },
         ("name", "resource_group_name", "location", "tenant_id", "sku_name"),
     ),
 }
@@ -73,15 +87,23 @@ class BashAzDetector(BashDetector):
         results: list[Finding] = []
         for command in commands(content, "az"):
             words = command.words[1:]
-            key = next((candidate for candidate in AZ_COMMANDS
-                        if tuple(words[:len(candidate)]) == candidate), None)
+            key = next(
+                (
+                    candidate
+                    for candidate in AZ_COMMANDS
+                    if tuple(words[: len(candidate)]) == candidate
+                ),
+                None,
+            )
             if key is None:
                 continue
-            values, _ = flags(words[len(key):], {"n": "name", "g": "resource-group",
-                                                "l": "location"})
+            values, _ = flags(
+                words[len(key) :], {"n": "name", "g": "resource-group", "l": "location"}
+            )
             tf_type, mapping, required = AZ_COMMANDS[key]
             attrs: dict[str, Any] = {
-                target: typed_value(target, values[source]) for source, target in mapping.items()
+                target: typed_value(target, values[source])
+                for source, target in mapping.items()
                 if source in values
             }
             known = set(mapping)
@@ -96,19 +118,32 @@ class BashAzDetector(BashDetector):
                 elif "location" in values:
                     attrs["location"] = values["location"]
             if tf_type == "azurerm_linux_virtual_machine":
-                known.update({"image", "os-disk-name", "storage-sku", "nics",
-                              "ssh-key-values", "generate-ssh-keys", "authentication-type"})
+                known.update(
+                    {
+                        "image",
+                        "os-disk-name",
+                        "storage-sku",
+                        "nics",
+                        "ssh-key-values",
+                        "generate-ssh-keys",
+                        "authentication-type",
+                    }
+                )
                 attrs.setdefault("size", "Standard_DS1_v2")
                 attrs.setdefault("admin_username", "azureuser")
-                attrs["os_disk"] = [{
-                    "caching": "ReadWrite",
-                    "storage_account_type": values.get("storage-sku", "Standard_LRS"),
-                    **({"name": values["os-disk-name"]} if "os-disk-name" in values else {}),
-                }]
+                attrs["os_disk"] = [
+                    {
+                        "caching": "ReadWrite",
+                        "storage_account_type": values.get("storage-sku", "Standard_LRS"),
+                        **({"name": values["os-disk-name"]} if "os-disk-name" in values else {}),
+                    }
+                ]
                 attrs["network_interface_ids"] = items(values["nics"]) if "nics" in values else []
                 if "nics" not in values:
-                    notes.append("TODO : créer les interfaces réseau et renseigner "
-                                 "network_interface_ids ; aucun ID inventé.")
+                    notes.append(
+                        "TODO : créer les interfaces réseau et renseigner "
+                        "network_interface_ids ; aucun ID inventé."
+                    )
                 elif any(
                     not nic.startswith("/subscriptions/") for nic in attrs["network_interface_ids"]
                 ):
@@ -119,14 +154,24 @@ class BashAzDetector(BashDetector):
                     attrs["source_image_id"] = image
                 elif image in IMAGES:
                     publisher, offer, sku = IMAGES[image]
-                    attrs["source_image_reference"] = [{
-                        "publisher": publisher, "offer": offer, "sku": sku, "version": "latest",
-                    }]
+                    attrs["source_image_reference"] = [
+                        {
+                            "publisher": publisher,
+                            "offer": offer,
+                            "sku": sku,
+                            "version": "latest",
+                        }
+                    ]
                 elif len(image.split(":")) == 4:
                     publisher, offer, sku, version = image.split(":")
-                    attrs["source_image_reference"] = [{
-                        "publisher": publisher, "offer": offer, "sku": sku, "version": version,
-                    }]
+                    attrs["source_image_reference"] = [
+                        {
+                            "publisher": publisher,
+                            "offer": offer,
+                            "sku": sku,
+                            "version": version,
+                        }
+                    ]
                 else:
                     notes.append("Image Azure non reconnue : source_image_reference à renseigner.")
                 if "ssh-key-values" in values:
@@ -135,12 +180,17 @@ class BashAzDetector(BashDetector):
                         key_value: Any = {"__raw__": f"file({hcl_string(public_key)})"}
                     else:
                         key_value = public_key
-                    attrs["admin_ssh_key"] = [{
-                        "username": attrs["admin_username"], "public_key": key_value,
-                    }]
+                    attrs["admin_ssh_key"] = [
+                        {
+                            "username": attrs["admin_username"],
+                            "public_key": key_value,
+                        }
+                    ]
                 elif "admin_password" not in attrs:
-                    notes.append("Attribut requis absent : admin_ssh_key ou admin_password ; "
-                                 "aucune clé SSH générée.")
+                    notes.append(
+                        "Attribut requis absent : admin_ssh_key ou admin_password ; "
+                        "aucune clé SSH générée."
+                    )
                 if "admin_password" in attrs:
                     attrs["disable_password_authentication"] = False
             elif tf_type == "azurerm_storage_account":
@@ -166,17 +216,27 @@ class BashAzDetector(BashDetector):
                         notes.append("Attribut requis absent : subnet.address_prefixes")
                     attrs["subnet"] = [subnet]
             elif tf_type == "azurerm_kubernetes_cluster":
-                known.update({"node-count", "node-vm-size", "nodepool-name",
-                              "enable-managed-identity", "assign-identity"})
+                known.update(
+                    {
+                        "node-count",
+                        "node-vm-size",
+                        "nodepool-name",
+                        "enable-managed-identity",
+                        "assign-identity",
+                    }
+                )
                 attrs.setdefault("dns_prefix", values.get("name"))
-                attrs["default_node_pool"] = [{
-                    "name": values.get("nodepool-name", "default"),
-                    "node_count": typed_value("node_count", values.get("node-count", 3)),
-                    "vm_size": values.get("node-vm-size", "Standard_DS2_v2"),
-                }]
+                attrs["default_node_pool"] = [
+                    {
+                        "name": values.get("nodepool-name", "default"),
+                        "node_count": typed_value("node_count", values.get("node-count", 3)),
+                        "vm_size": values.get("node-vm-size", "Standard_DS2_v2"),
+                    }
+                ]
                 if "assign-identity" in values:
-                    attrs["identity"] = [{"type": "UserAssigned",
-                                          "identity_ids": items(values["assign-identity"])}]
+                    attrs["identity"] = [
+                        {"type": "UserAssigned", "identity_ids": items(values["assign-identity"])}
+                    ]
                 else:
                     attrs["identity"] = [{"type": "SystemAssigned"}]
             elif tf_type == "azurerm_key_vault":
@@ -184,10 +244,19 @@ class BashAzDetector(BashDetector):
                 attrs["sku_name"] = str(values.get("sku", "standard")).lower()
                 attrs["tenant_id"] = {"__raw__": "data.azurerm_client_config.current.tenant_id"}
                 notes.append("Déclarer data azurerm_client_config current pour obtenir tenant_id.")
-            results.append(finding(
-                path=path, command=command, provider="azurerm", tf_type=tf_type,
-                name=values.get("name"), attributes=attrs, values=values, known=known,
-                ignored={"subscription", "output", "only-show-errors"},
-                required=required, notes=notes,
-            ))
+            results.append(
+                finding(
+                    path=path,
+                    command=command,
+                    provider="azurerm",
+                    tf_type=tf_type,
+                    name=values.get("name"),
+                    attributes=attrs,
+                    values=values,
+                    known=known,
+                    ignored={"subscription", "output", "only-show-errors"},
+                    required=required,
+                    notes=notes,
+                )
+            )
         return results
